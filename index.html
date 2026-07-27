@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#eef2ec">
+  <title>Echo English - 个人英语练习台</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=20260725-practice7">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">E</div>
+        <div>
+          <strong>Echo English</strong>
+          <span>个人英语练习台</span>
+        </div>
+      </div>
+
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-item active" data-view="home">
+          <span class="nav-icon">▦</span><span>今日练习</span>
+        </button>
+        <button class="nav-item" data-view="library">
+          <span class="nav-icon">≡</span><span>我的题库</span>
+        </button>
+        <button class="nav-item" data-view="mistakes">
+          <span class="nav-icon">!</span><span>错题本</span>
+          <span class="nav-count" id="navMistakeCount">0</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-settings">
+        <span class="sidebar-section-label">练习设置</span>
+        <label class="switch-row" for="shuffleToggle">
+          <span>随机出题</span>
+          <input id="shuffleToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="switch-row" for="soundEffectsToggle">
+          <span>反馈音效</span>
+          <input id="soundEffectsToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="switch-row" for="autoReadToggle">
+          <span>每题自动朗读</span>
+          <input id="autoReadToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="switch-row" for="grammarToggle">
+          <span>句型结构</span>
+          <input id="grammarToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+      </div>
+
+      <div class="sidebar-summary">
+        <span>本机学习数据</span>
+        <strong id="sidebarTotal">0 道题</strong>
+        <div class="summary-bar"><i id="sidebarProgress"></i></div>
+        <small id="sidebarAccuracy">累计正确率 0%</small>
+      </div>
+
+      <p class="local-note">题库保存在当前浏览器；音标查询时需要联网。</p>
+    </aside>
+    <button class="sidebar-scrim" id="sidebarScrim" aria-label="关闭菜单"></button>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="menuButton" title="打开菜单" aria-label="打开菜单">☰</button>
+        <div>
+          <p class="eyebrow" id="pageEyebrow">DAILY PRACTICE</p>
+          <h1 id="pageTitle">今天继续开口、动手、记住</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="tool-button" id="soundToggleButton" title="关闭反馈音效" aria-label="关闭反馈音效" aria-pressed="true">
+            <span aria-hidden="true">♪</span><span class="tool-button-label">音效</span>
+          </button>
+          <button class="button primary" id="quickAddButton">+ 录入题目</button>
+        </div>
+      </header>
+
+      <section class="view active" id="homeView">
+        <div class="practice-banner">
+          <div class="banner-copy">
+            <span class="status-label">个人训练计划</span>
+            <h2>把今天不会的，练到会为止。</h2>
+            <p id="homeSummary">选一个题库开始，答错的题会自动进入错题本。</p>
+            <div class="banner-actions">
+              <button class="button light" id="startAllButton">开始练习 <span>→</span></button>
+              <button class="button ghost-light" id="startMistakesButton">只练错题</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric">
+            <span>题库总量</span>
+            <strong id="metricQuestions">0</strong>
+            <small>你可随时添加新题</small>
+          </article>
+          <article class="metric">
+            <span>待复习错题</span>
+            <strong class="coral" id="metricMistakes">0</strong>
+            <small>答对后自动移出</small>
+          </article>
+          <article class="metric">
+            <span>累计正确率</span>
+            <strong id="metricAccuracy">0%</strong>
+            <small id="metricAttempts">尚未开始练习</small>
+          </article>
+          <article class="metric metric-today">
+            <span>今日已练</span>
+            <strong id="metricToday">0</strong>
+            <small id="metricTodayNote">从一道题开始热身</small>
+          </article>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">YOUR SETS</p>
+            <h2>选择今天要练的题库</h2>
+          </div>
+          <button class="text-button" id="newSetButton">+ 新建题库</button>
+        </div>
+        <div class="set-grid" id="homeSetGrid"></div>
+      </section>
+
+      <section class="view" id="libraryView">
+        <div class="toolbar">
+          <div class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="questionSearch" type="search" placeholder="搜索题目或答案">
+          </div>
+          <select id="librarySetFilter" aria-label="筛选题库"></select>
+          <button class="button secondary" id="importButton">导入</button>
+          <button class="button secondary" id="exportButton">导出</button>
+        </div>
+        <div class="library-layout">
+          <aside class="set-list-panel">
+            <div class="panel-title">
+              <h2>题库</h2>
+              <button class="icon-button" id="newSetSmallButton" title="新建题库" aria-label="新建题库">+</button>
+            </div>
+            <div id="librarySetList"></div>
+          </aside>
+          <div class="question-panel">
+            <div class="panel-title question-panel-title">
+              <div>
+                <h2 id="libraryTitle">全部题目</h2>
+                <p id="libraryCount">0 道题</p>
+              </div>
+              <div class="panel-actions">
+                <button class="button secondary" id="manageSetButton" hidden>管理题库</button>
+                <button class="button primary" id="bulkAddButton">+ 批量录题</button>
+              </div>
+            </div>
+            <div class="question-list" id="questionList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="mistakesView">
+        <div class="mistake-head">
+          <div>
+            <p class="eyebrow">MISTAKE NOTEBOOK</p>
+            <h2>不怕答错，就怕没再答一次</h2>
+            <p>错题会按题库自动收集；重练答对后，它会从这里消失。</p>
+          </div>
+          <button class="button primary" id="mistakePracticeButton">开始错题重练</button>
+        </div>
+        <div class="mistake-groups" id="mistakeGroups"></div>
+      </section>
+
+      <section class="view practice-view" id="practiceView">
+        <div class="practice-topline">
+          <button class="text-button" id="exitPracticeButton">← 退出练习</button>
+          <div class="practice-counter"><span id="practiceCurrent">1</span> / <span id="practiceTotal">1</span></div>
+          <span class="practice-topline-spacer" aria-hidden="true"></span>
+        </div>
+        <div class="practice-progress"><i id="practiceProgressBar"></i></div>
+
+        <div class="practice-workspace">
+          <div class="question-stage" id="questionStage">
+          <div class="feedback-burst" id="feedbackBurst" aria-hidden="true"></div>
+          <div class="question-meta-row">
+            <p class="question-set-name" id="practiceSetName">题库</p>
+            <button class="hint-button" id="hintButton" type="button" title="显示关键词提示" aria-label="显示关键词提示" aria-pressed="false">
+              <span aria-hidden="true">↓</span><span>提示词</span>
+            </button>
+          </div>
+          <div class="keyword-hint" id="keywordHint" aria-live="polite" hidden>
+            <span class="keyword-hint-label">WORD CLUE</span>
+            <button class="word-token keyword-hint-word" id="keywordHintWord" type="button" data-word="word">word</button>
+            <span class="keyword-hint-meaning" id="keywordHintMeaning">中文</span>
+            <span class="keyword-hint-phonetic" id="keywordHintPhonetic">/phonetic/</span>
+          </div>
+          <h2 id="practicePrompt">题目</h2>
+          <p class="question-hint" id="practiceHint">在下方输入你的答案</p>
+
+          <section class="grammar-guide" id="grammarGuide" aria-label="句型结构" hidden>
+            <div class="grammar-guide-heading">
+              <span class="grammar-kicker">SENTENCE MAP</span>
+              <strong id="grammarPattern">句型结构</strong>
+            </div>
+            <div class="grammar-tokens" id="grammarTokens"></div>
+          </section>
+
+          <form id="answerForm" autocomplete="off">
+            <div class="answer-label-row">
+              <label for="answerInput">你的答案</label>
+              <span id="attemptCounter">第 1 次 / 共 3 次</span>
+            </div>
+            <div class="answer-row">
+              <div class="answer-slots" id="answerSlots" role="group" aria-label="逐词输入答案"></div>
+              <input id="answerInput" type="hidden">
+              <button class="button primary answer-submit" type="submit">提交答案</button>
+            </div>
+          </form>
+
+          <div class="feedback" id="feedbackPanel" aria-live="polite">
+            <div class="feedback-icon" id="feedbackIcon"></div>
+            <div>
+              <strong id="feedbackTitle"></strong>
+              <p id="feedbackText"></p>
+              <p class="answer-note" id="feedbackNote"></p>
+            </div>
+            <button class="button dark" id="nextQuestionButton">下一题 →</button>
+          </div>
+
+            <div class="practice-shortcuts" aria-label="练习快捷键">
+              <span><kbd>Enter</kbd> 提交 / 下一题</span>
+              <span><kbd>F2</kbd> 朗读</span>
+              <span><kbd>F3</kbd> 提示</span>
+              <span><kbd>F4</kbd> 结构</span>
+              <span><kbd>F5</kbd> 提交 / 下一题</span>
+            </div>
+          </div>
+
+          <aside class="practice-side-tools" aria-label="听力工具">
+            <span class="practice-side-label">听力工具</span>
+            <div class="listening-controls">
+              <button class="listen-button" id="speakPromptButton" title="播放自然英文男声" aria-label="播放自然英文男声"><span id="voiceCycleIcon" aria-hidden="true">♂</span><span id="voiceCycleLabel">自然男声</span></button>
+              <button class="listen-button slow-listen-button" id="speakSlowButton" title="清晰慢速播放英文" aria-label="清晰慢速播放英文"><span aria-hidden="true">0.85×</span><span>清晰慢速</span></button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view result-view" id="resultView">
+        <div class="result-panel" id="resultPanel">
+          <div class="result-confetti" id="resultConfetti" aria-hidden="true"></div>
+          <span class="result-kicker">SESSION COMPLETE</span>
+          <div class="result-score" id="resultScore">0%</div>
+          <h2 id="resultTitle">本轮练习完成</h2>
+          <p id="resultText"></p>
+          <div class="result-stats">
+            <div><strong id="resultCorrect">0</strong><span>答对</span></div>
+            <div><strong id="resultWrong">0</strong><span>答错</span></div>
+            <div><strong id="resultTotal">0</strong><span>总题数</span></div>
+          </div>
+          <div class="result-actions">
+            <button class="button primary" id="retryWrongButton">只重练本轮错题</button>
+            <button class="button secondary" id="backHomeButton">返回首页</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="questionModal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="questionModalTitle">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">ADD QUESTIONS</p>
+          <h2 id="questionModalTitle">批量录入题目</h2>
+        </div>
+        <button class="icon-button close-modal" data-close-modal="questionModal" aria-label="关闭">×</button>
+      </div>
+      <label for="modalSetSelect">放入题库</label>
+      <select id="modalSetSelect"></select>
+      <label for="bulkQuestionInput">每行一道：题目 | 可接受说法 | 提示词,中文,音标</label>
+      <textarea id="bulkQuestionInput" rows="10" placeholder="例如：&#10;与客户建立联系 | establish contact with the customer | establish,建立,/ɪˈstæblɪʃ/&#10;报价单 | quotation / quote&#10;Please find the catalogue attached. | 请查收附件中的产品目录"></textarea>
+      <p class="format-tip">提示词部分可以不填；多个可接受说法用 <code>/</code> 隔开。</p>
+      <div class="modal-actions">
+        <button class="button secondary close-modal" data-close-modal="questionModal">取消</button>
+        <button class="button primary" id="saveQuestionsButton">保存题目</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="setModal" aria-hidden="true">
+    <div class="modal compact" role="dialog" aria-modal="true" aria-labelledby="setModalTitle">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">NEW SET</p>
+          <h2 id="setModalTitle">新建题库</h2>
+        </div>
+        <button class="icon-button close-modal" data-close-modal="setModal" aria-label="关闭">×</button>
+      </div>
+      <label for="setNameInput">题库名称</label>
+      <input id="setNameInput" type="text" maxlength="30" placeholder="例如：外贸邮件常用句">
+      <label for="setDescriptionInput">一句说明（可选）</label>
+      <input id="setDescriptionInput" type="text" maxlength="60" placeholder="这个题库用来练什么">
+      <div class="modal-actions split-actions">
+        <button class="text-button danger" id="deleteSetButton" hidden>删除题库</button>
+        <div>
+          <button class="button secondary close-modal" data-close-modal="setModal">取消</button>
+          <button class="button primary" id="saveSetButton">创建题库</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="editModal" aria-hidden="true">
+    <div class="modal compact" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">EDIT QUESTION</p>
+          <h2 id="editModalTitle">修改题目</h2>
+        </div>
+        <button class="icon-button close-modal" data-close-modal="editModal" aria-label="关闭">×</button>
+      </div>
+      <label for="editPromptInput">题目</label>
+      <textarea id="editPromptInput" rows="3"></textarea>
+      <label for="editAnswerInput">可接受说法（多个说法用 / 隔开）</label>
+      <input id="editAnswerInput" type="text">
+      <label for="editNoteInput">答案备注（可选）</label>
+      <input id="editNoteInput" type="text" placeholder="例如：用于首封开发信">
+      <label for="editHintWordInput">提示词（按 ↓ 时显示，可选）</label>
+      <div class="hint-edit-grid">
+        <input id="editHintWordInput" type="text" placeholder="英文单词">
+        <input id="editHintMeaningInput" type="text" placeholder="中文意思">
+        <input id="editHintPhoneticInput" type="text" placeholder="音标，例如 /rɪˈplaɪ/">
+      </div>
+      <div class="modal-actions split-actions">
+        <button class="text-button danger" id="deleteQuestionButton">删除题目</button>
+        <div>
+          <button class="button secondary close-modal" data-close-modal="editModal">取消</button>
+          <button class="button primary" id="saveEditButton">保存修改</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop word-coach-backdrop" id="wordCoach" aria-hidden="true">
+    <div class="modal compact word-coach" role="dialog" aria-modal="true" aria-labelledby="wordCoachTitle">
+      <div class="modal-header word-coach-header">
+        <div>
+          <p class="eyebrow">PRONUNCIATION</p>
+          <h2 id="wordCoachTitle">word</h2>
+        </div>
+        <button class="icon-button close-modal" data-close-modal="wordCoach" aria-label="关闭">×</button>
+      </div>
+      <div class="word-coach-body">
+        <div class="phonetic-display" id="wordCoachPhonetics">
+          <span class="phonetic-loading">正在查找音标…</span>
+        </div>
+        <div class="word-coach-lexicon" id="wordCoachLexicon">
+          <span class="word-coach-pos" id="wordCoachPartOfSpeech">词性载入中</span>
+          <strong id="wordCoachMeaning">正在查找中文释义…</strong>
+        </div>
+        <div class="pronunciation-actions">
+          <button class="pronunciation-button us" id="playUsButton" type="button">
+            <span class="pronunciation-code">US</span>
+            <span><strong>美式发音</strong><small id="usPhonetic">点击播放</small></span>
+            <i aria-hidden="true">▷</i>
+          </button>
+          <button class="pronunciation-button uk" id="playUkButton" type="button">
+            <span class="pronunciation-code">UK</span>
+            <span><strong>英式发音</strong><small id="ukPhonetic">点击播放</small></span>
+            <i aria-hidden="true">▷</i>
+          </button>
+        </div>
+        <p class="word-coach-status" id="wordCoachStatus">音标由联网词典提供，朗读可由浏览器完成。</p>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="importFileInput" accept="application/json" hidden>
+  <div class="toast" id="toast" aria-live="polite"></div>
+
+  <script src="app.js?v=20260725-practice7"></script>
+</body>
+</html>

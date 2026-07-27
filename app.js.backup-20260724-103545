@@ -1,0 +1,1753 @@
+(function () {
+  "use strict";
+
+  const STORAGE_KEY = "echo-english-v1";
+  const SESSION_STORAGE_KEY = "echo-english-active-session-v1";
+  const PHONETIC_CACHE_KEY = "echo-english-phonetics-v1";
+  const DICTIONARY_ENDPOINT = "https://api.dictionaryapi.dev/api/v2/entries/en/";
+  const MAX_ATTEMPTS = 3;
+  const CONTRACTION_RULES = [
+    [/\bwon't\b/g, "will not"], [/\bcan't\b/g, "can not"], [/\bcannot\b/g, "can not"],
+    [/\bdon't\b/g, "do not"], [/\bdoesn't\b/g, "does not"], [/\bdidn't\b/g, "did not"],
+    [/\bisn't\b/g, "is not"], [/\baren't\b/g, "are not"], [/\bwasn't\b/g, "was not"], [/\bweren't\b/g, "were not"],
+    [/\bhaven't\b/g, "have not"], [/\bhasn't\b/g, "has not"], [/\bhadn't\b/g, "had not"],
+    [/\bcouldn't\b/g, "could not"], [/\bwouldn't\b/g, "would not"], [/\bshouldn't\b/g, "should not"],
+    [/\bi'm\b/g, "i am"], [/\byou're\b/g, "you are"], [/\bwe're\b/g, "we are"], [/\bthey're\b/g, "they are"],
+    [/\bi've\b/g, "i have"], [/\byou've\b/g, "you have"], [/\bwe've\b/g, "we have"], [/\bthey've\b/g, "they have"],
+    [/\bi'll\b/g, "i will"], [/\byou'll\b/g, "you will"], [/\bwe'll\b/g, "we will"], [/\bthey'll\b/g, "they will"],
+    [/\bi'd\b/g, "i would"], [/\byou'd\b/g, "you would"], [/\bwe'd\b/g, "we would"], [/\bthey'd\b/g, "they would"],
+    [/\bwhat's\b/g, "what is"], [/\bwhere's\b/g, "where is"], [/\bhow's\b/g, "how is"],
+    [/\bwho's\b/g, "who is"], [/\bwhen's\b/g, "when is"], [/\bwhy's\b/g, "why is"],
+    [/\bthat's\b/g, "that is"], [/\bthere's\b/g, "there is"], [/\bhere's\b/g, "here is"],
+    [/\bit's\b/g, "it is"], [/\bhe's\b/g, "he is"], [/\bshe's\b/g, "she is"], [/\blet's\b/g, "let us"],
+    [/\bwhats\b/g, "what is"], [/\bwheres\b/g, "where is"], [/\bhows\b/g, "how is"],
+    [/\bim\b/g, "i am"], [/\bive\b/g, "i have"], [/\byoure\b/g, "you are"], [/\bweve\b/g, "we have"],
+    [/\bdont\b/g, "do not"], [/\bdoesnt\b/g, "does not"], [/\bdidnt\b/g, "did not"],
+    [/\bisnt\b/g, "is not"], [/\barent\b/g, "are not"], [/\bwasnt\b/g, "was not"], [/\bwerent\b/g, "were not"],
+    [/\bhavent\b/g, "have not"], [/\bhasnt\b/g, "has not"], [/\bhadnt\b/g, "had not"],
+    [/\bcouldnt\b/g, "could not"], [/\bwouldnt\b/g, "would not"], [/\bshouldnt\b/g, "should not"],
+    [/\bwanna\b/g, "want to"], [/\bgonna\b/g, "going to"]
+  ];
+  const SEMANTIC_PHRASE_GROUPS = [
+    ["what should i call you", "what can i call you", "what is your name", "how should i address you", "may i know your name"],
+    ["could you", "can you", "would you please", "would you"],
+    ["do you want to", "would you like to"],
+    ["around here", "near here", "nearby"],
+    ["take a photo", "take a picture", "snap a photo", "snap a picture"],
+    ["look forward to your reply", "look forward to hearing from you"],
+    ["nice talking to you", "nice chatting with you"],
+    ["see you around", "see you later", "catch you later"],
+    ["no worries", "no problem", "do not worry", "it is okay"]
+  ];
+  const SEMANTIC_WORD_EQUIVALENTS = {
+    favourite: "favorite",
+    picture: "photo",
+    pictures: "photos",
+    quote: "quotation",
+    needs: "requirements",
+    need: "requirement",
+    catalog: "catalogue",
+    insta: "instagram"
+  };
+  const BUILT_IN_ANSWER_VARIANTS = {
+    "q-1": { anchor: "Please find the quotation attached", variants: ["Please see the attached quotation", "Please check the attached quotation", "I have attached the quotation"] },
+    "q-2": { anchor: "I look forward to your reply", variants: ["I look forward to hearing from you", "I am looking forward to your reply", "Looking forward to hearing from you", "I hope to hear from you soon"] },
+    "q-3": { anchor: "What is your target price", variants: ["What price are you targeting", "What price do you have in mind"] },
+    "q-4": { anchor: "We can customize it according to your requirements", variants: ["We can customize it to your needs", "We can tailor it to your requirements", "We can tailor it to your needs"] },
+    "q-travel-1": { anchor: "OMG, this place is amazing", variants: ["Wow, this place is amazing", "Wow, this place is beautiful", "This place is so beautiful", "Oh wow, this place is incredible"] },
+    "q-travel-2": { anchor: "Hey, what's up", variants: ["Hi, how are you doing", "Hey, how are you doing", "Hey, how are things", "Hey, how have you been"] },
+    "q-travel-3": { anchor: "I'm Yang. What should I call you", variants: ["My name is Yang. What's your name", "My name is Yang. What can I call you", "I'm Yang. How should I address you"] },
+    "q-travel-4": { anchor: "Where are you from", variants: ["Where do you come from"] },
+    "q-travel-5": { anchor: "Is this your first time here", variants: ["Is this your first time coming here", "Is it your first time here"] },
+    "q-travel-6": { anchor: "I'm just here for a few days", variants: ["I'm only here for a few days", "I'm here for just a few days", "I'm just visiting for a few days"] },
+    "q-travel-7": { anchor: "The weather is so nice today", variants: ["The weather is really nice today", "It's such a nice day today", "It's beautiful out today"] },
+    "q-travel-8": { anchor: "This beach is gorgeous", variants: ["This beach is beautiful", "This beach is stunning", "What a beautiful beach"] },
+    "q-travel-9": { anchor: "Could you take a quick photo for me", variants: ["Could you take a picture of me", "Would you mind taking a photo for me", "Can you snap a quick picture for me"] },
+    "q-travel-10": { anchor: "Want me to take one for you", variants: ["Can I take a photo for you", "Would you like me to take a photo for you", "Want me to take your picture"] },
+    "q-travel-11": { anchor: "Do you know any good food around here", variants: ["Is there any good food nearby", "Any good places to eat around here", "Do you know anywhere good to eat nearby"] },
+    "q-travel-12": { anchor: "What's your favorite local dish", variants: ["Which local dish do you like best", "What's your favorite local food", "Which local food is your favorite"] },
+    "q-travel-13": { anchor: "Is this spicy", variants: ["Is this dish spicy", "Is the food spicy"] },
+    "q-travel-14": { anchor: "How do I get to the beach", variants: ["How can I get to the beach", "Which way is the beach", "Can you tell me how to get to the beach"] },
+    "q-travel-15": { anchor: "Is it far? Can I walk there", variants: ["Is it far? Can I get there on foot", "Is it far? Is it within walking distance"] },
+    "q-travel-16": { anchor: "Do I turn left here", variants: ["Should I take a left here", "Do I make a left here"] },
+    "q-travel-17": { anchor: "Which beach is less crowded", variants: ["Which beach is quieter", "Which beach has fewer people", "Is there a less crowded beach"] },
+    "q-travel-18": { anchor: "Where's a good spot for sunset", variants: ["What's a good place to watch the sunset", "Where's the best place to see the sunset", "Where can I watch the sunset"] },
+    "q-travel-19": { anchor: "The waves are pretty strong today", variants: ["The waves are a bit rough today", "The waves are pretty big today", "The sea is rough today"] },
+    "q-travel-20": { anchor: "Wanna grab a coffee", variants: ["Do you want to get some coffee", "How about grabbing a coffee", "Want to go for coffee"] },
+    "q-travel-21": { anchor: "Are you on Instagram", variants: ["Do you use Instagram", "Do you have Instagram", "Are you on Insta"] },
+    "q-travel-22": { anchor: "No worries, take your time", variants: ["No problem, take your time", "Don't worry, take your time", "It's okay, take your time"] },
+    "q-travel-23": { anchor: "It was really nice talking to you", variants: ["It was nice chatting with you", "I enjoyed talking to you", "I had a great time talking with you"] },
+    "q-travel-24": { anchor: "Have fun on your trip. See you around", variants: ["Enjoy your trip. See you later", "Have a good trip. Catch you later", "Have a great trip. See you"] }
+  };
+  const VOICE_NAME_HINTS = {
+    male: ["david", "mark", "guy", "ryan", "george", "james", "christopher", "brian", "eric", "roger", "andrew", "liam", "william"],
+    female: ["zira", "aria", "jenny", "samantha", "hazel", "susan", "emma", "michelle", "libby", "sonia", "natasha", "ava"]
+  };
+  const BUILT_IN_PHONETICS = {
+    reliable: { us: "/rɪˈlaɪəbəl/", uk: "/rɪˈlaɪəbəl/" },
+    negotiate: { us: "/nɪˈɡoʊʃieɪt/", uk: "/nɪˈɡəʊʃieɪt/" },
+    shipment: { us: "/ˈʃɪpmənt/", uk: "/ˈʃɪpmənt/" },
+    quotation: { us: "/kwoʊˈteɪʃən/", uk: "/kwəʊˈteɪʃən/" },
+    attached: { us: "/əˈtætʃt/", uk: "/əˈtætʃt/" },
+    reply: { us: "/rɪˈplaɪ/", uk: "/rɪˈplaɪ/" },
+    target: { us: "/ˈtɑːrɡɪt/", uk: "/ˈtɑːɡɪt/" },
+    price: { us: "/praɪs/", uk: "/praɪs/" },
+    customize: { us: "/ˈkʌstəmaɪz/", uk: "/ˈkʌstəmaɪz/" },
+    according: { us: "/əˈkɔːrdɪŋ/", uk: "/əˈkɔːdɪŋ/" },
+    requirements: { us: "/rɪˈkwaɪərmənts/", uk: "/rɪˈkwaɪəmənts/" },
+    customer: { us: "/ˈkʌstəmər/", uk: "/ˈkʌstəmə/" },
+    catalogue: { us: "/ˈkætəlɔːɡ/", uk: "/ˈkætəlɒɡ/" },
+    establish: { us: "/ɪˈstæblɪʃ/", uk: "/ɪˈstæblɪʃ/" },
+    contact: { us: "/ˈkɑːntækt/", uk: "/ˈkɒntækt/" },
+    forward: { us: "/ˈfɔːrwərd/", uk: "/ˈfɔːwəd/" },
+    please: { us: "/pliːz/", uk: "/pliːz/" },
+    find: { us: "/faɪnd/", uk: "/faɪnd/" },
+    answer: { us: "/ˈænsər/", uk: "/ˈɑːnsə/" },
+    practice: { us: "/ˈpræktɪs/", uk: "/ˈpræktɪs/" },
+    email: { us: "/ˈiːmeɪl/", uk: "/ˈiːmeɪl/" },
+    invoice: { us: "/ˈɪnvɔɪs/", uk: "/ˈɪnvɔɪs/" },
+    payment: { us: "/ˈpeɪmənt/", uk: "/ˈpeɪmənt/" },
+    delivery: { us: "/dɪˈlɪvəri/", uk: "/dɪˈlɪvəri/" },
+    quality: { us: "/ˈkwɑːləti/", uk: "/ˈkwɒləti/" },
+    sample: { us: "/ˈsæmpəl/", uk: "/ˈsɑːmpəl/" },
+    quantity: { us: "/ˈkwɑːntəti/", uk: "/ˈkwɒntəti/" },
+    discount: { us: "/ˈdɪskaʊnt/", uk: "/ˈdɪskaʊnt/" },
+    meet: { us: "/miːt/", uk: "/miːt/" },
+    first: { us: "/fɜːrst/", uk: "/fɜːst/" },
+    travel: { us: "/ˈtrævəl/", uk: "/ˈtrævəl/" },
+    photo: { us: "/ˈfoʊtoʊ/", uk: "/ˈfəʊtəʊ/" },
+    beach: { us: "/biːtʃ/", uk: "/biːtʃ/" },
+    pier: { us: "/pɪr/", uk: "/pɪə/" },
+    left: { us: "/left/", uk: "/left/" },
+    attraction: { us: "/əˈtrækʃən/", uk: "/əˈtrækʃən/" },
+    sunset: { us: "/ˈsʌnset/", uk: "/ˈsʌnset/" },
+    quiet: { us: "/ˈkwaɪət/", uk: "/ˈkwaɪət/" },
+    waves: { us: "/weɪvz/", uk: "/weɪvz/" },
+    recommend: { us: "/ˌrekəˈmend/", uk: "/ˌrekəˈmend/" },
+    local: { us: "/ˈloʊkəl/", uk: "/ˈləʊkəl/" },
+    cash: { us: "/kæʃ/", uk: "/kæʃ/" },
+    trip: { us: "/trɪp/", uk: "/trɪp/" }
+  };
+
+  const WORD_CLUES = {
+    a: { meaning: "一个（不定冠词）", phonetic: "/ə/" },
+    according: { meaning: "按照；根据", phonetic: "/əˈkɔːrdɪŋ/" },
+    amazing: { meaning: "太棒了；惊艳的", phonetic: "/əˈmeɪzɪŋ/" },
+    and: { meaning: "和；并且", phonetic: "/ænd/" },
+    any: { meaning: "任何；一些", phonetic: "/ˈeni/" },
+    are: { meaning: "是（用于 you/we/they）", phonetic: "/ɑːr/" },
+    around: { meaning: "附近；周围", phonetic: "/əˈraʊnd/" },
+    attached: { meaning: "附上的", phonetic: "/əˈtætʃt/" },
+    beach: { meaning: "海滩", phonetic: "/biːtʃ/" },
+    call: { meaning: "称呼；叫", phonetic: "/kɔːl/" },
+    can: { meaning: "可以；能够", phonetic: "/kæn/" },
+    coffee: { meaning: "咖啡", phonetic: "/ˈkɔːfi/" },
+    could: { meaning: "可以吗（更委婉）", phonetic: "/kʊd/" },
+    crowded: { meaning: "拥挤的；人多的", phonetic: "/ˈkraʊdɪd/" },
+    customize: { meaning: "定制", phonetic: "/ˈkʌstəmaɪz/" },
+    days: { meaning: "天；几天", phonetic: "/deɪz/" },
+    dish: { meaning: "菜肴", phonetic: "/dɪʃ/" },
+    do: { meaning: "助动词；做", phonetic: "/duː/" },
+    far: { meaning: "远的", phonetic: "/fɑːr/" },
+    favorite: { meaning: "最喜欢的", phonetic: "/ˈfeɪvərɪt/" },
+    few: { meaning: "几个；少量", phonetic: "/fjuː/" },
+    find: { meaning: "找到；查收", phonetic: "/faɪnd/" },
+    first: { meaning: "第一次的；第一", phonetic: "/fɜːrst/" },
+    food: { meaning: "食物；吃的", phonetic: "/fuːd/" },
+    for: { meaning: "为了；给", phonetic: "/fɔːr/" },
+    forward: { meaning: "向前；期待", phonetic: "/ˈfɔːrwərd/" },
+    from: { meaning: "来自；从", phonetic: "/frʌm/" },
+    fun: { meaning: "开心；乐趣", phonetic: "/fʌn/" },
+    get: { meaning: "到达；得到", phonetic: "/ɡet/" },
+    god: { meaning: "上帝；天啊", phonetic: "/ɡɑːd/" },
+    going: { meaning: "进行；过得", phonetic: "/ˈɡoʊɪŋ/" },
+    good: { meaning: "好的；不错的", phonetic: "/ɡʊd/" },
+    gorgeous: { meaning: "美极了；非常漂亮", phonetic: "/ˈɡɔːrdʒəs/" },
+    grab: { meaning: "去喝/吃；顺手拿", phonetic: "/ɡræb/" },
+    great: { meaning: "很棒的", phonetic: "/ɡreɪt/" },
+    have: { meaning: "有；祝你", phonetic: "/hæv/" },
+    hey: { meaning: "嘿；嗨", phonetic: "/heɪ/" },
+    here: { meaning: "这里", phonetic: "/hɪr/" },
+    how: { meaning: "怎样；如何", phonetic: "/haʊ/" },
+    "how's": { meaning: "怎么样（how is）", phonetic: "/haʊz/" },
+    i: { meaning: "我", phonetic: "/aɪ/" },
+    "i'm": { meaning: "我是（I am）", phonetic: "/aɪm/" },
+    instagram: { meaning: "Instagram 社交平台", phonetic: "/ˈɪnstəɡræm/" },
+    is: { meaning: "是", phonetic: "/ɪz/" },
+    it: { meaning: "它；这件事", phonetic: "/ɪt/" },
+    just: { meaning: "只是；就", phonetic: "/dʒʌst/" },
+    know: { meaning: "知道；了解", phonetic: "/noʊ/" },
+    left: { meaning: "左边；向左", phonetic: "/left/" },
+    less: { meaning: "更少的", phonetic: "/les/" },
+    local: { meaning: "当地的", phonetic: "/ˈloʊkəl/" },
+    look: { meaning: "期待；看", phonetic: "/lʊk/" },
+    looking: { meaning: "期待着", phonetic: "/ˈlʊkɪŋ/" },
+    me: { meaning: "我（宾格）", phonetic: "/miː/" },
+    my: { meaning: "我的", phonetic: "/maɪ/" },
+    name: { meaning: "名字", phonetic: "/neɪm/" },
+    nice: { meaning: "不错的；愉快的", phonetic: "/naɪs/" },
+    no: { meaning: "没有；不用", phonetic: "/noʊ/" },
+    oh: { meaning: "哦；啊", phonetic: "/oʊ/" },
+    omg: { meaning: "天啊（口语缩写）", phonetic: "/ˌoʊ em ˈdʒiː/" },
+    on: { meaning: "在；使用着", phonetic: "/ɑːn/" },
+    one: { meaning: "一个；一张", phonetic: "/wʌn/" },
+    our: { meaning: "我们的", phonetic: "/aʊr/" },
+    photo: { meaning: "照片", phonetic: "/ˈfoʊtoʊ/" },
+    place: { meaning: "地方", phonetic: "/pleɪs/" },
+    please: { meaning: "请", phonetic: "/pliːz/" },
+    pretty: { meaning: "挺；相当", phonetic: "/ˈprɪti/" },
+    price: { meaning: "价格", phonetic: "/praɪs/" },
+    quick: { meaning: "快速的；顺手的", phonetic: "/kwɪk/" },
+    quotation: { meaning: "报价单", phonetic: "/kwoʊˈteɪʃən/" },
+    really: { meaning: "真的；很", phonetic: "/ˈriːəli/" },
+    reply: { meaning: "回复", phonetic: "/rɪˈplaɪ/" },
+    requirements: { meaning: "要求；需求", phonetic: "/rɪˈkwaɪərmənts/" },
+    see: { meaning: "见到；回头见", phonetic: "/siː/" },
+    should: { meaning: "应该", phonetic: "/ʃʊd/" },
+    so: { meaning: "这么；非常", phonetic: "/soʊ/" },
+    spicy: { meaning: "辣的", phonetic: "/ˈspaɪsi/" },
+    spot: { meaning: "地点；位置", phonetic: "/spɑːt/" },
+    strong: { meaning: "强的；大的", phonetic: "/strɔːŋ/" },
+    sunset: { meaning: "日落", phonetic: "/ˈsʌnset/" },
+    take: { meaning: "拍；带；花费", phonetic: "/teɪk/" },
+    talking: { meaning: "聊天；交谈", phonetic: "/ˈtɔːkɪŋ/" },
+    target: { meaning: "目标", phonetic: "/ˈtɑːrɡɪt/" },
+    the: { meaning: "这/那；定冠词", phonetic: "/ðə/" },
+    there: { meaning: "那里", phonetic: "/ðer/" },
+    this: { meaning: "这个；这里", phonetic: "/ðɪs/" },
+    time: { meaning: "时间；次数", phonetic: "/taɪm/" },
+    to: { meaning: "到；去；向", phonetic: "/tə/" },
+    today: { meaning: "今天", phonetic: "/təˈdeɪ/" },
+    trip: { meaning: "旅行；旅途", phonetic: "/trɪp/" },
+    turn: { meaning: "转弯", phonetic: "/tɜːrn/" },
+    up: { meaning: "近况；向上", phonetic: "/ʌp/" },
+    walk: { meaning: "步行；走路", phonetic: "/wɔːk/" },
+    wanna: { meaning: "想要（want to 的口语）", phonetic: "/ˈwɑːnə/" },
+    want: { meaning: "想要", phonetic: "/wɑːnt/" },
+    was: { meaning: "是（过去式）", phonetic: "/wʌz/" },
+    waves: { meaning: "海浪", phonetic: "/weɪvz/" },
+    weather: { meaning: "天气", phonetic: "/ˈweðər/" },
+    we: { meaning: "我们", phonetic: "/wiː/" },
+    what: { meaning: "什么", phonetic: "/wʌt/" },
+    "what's": { meaning: "是什么（what is）", phonetic: "/wʌts/" },
+    where: { meaning: "哪里", phonetic: "/wer/" },
+    "where's": { meaning: "在哪里（where is）", phonetic: "/werz/" },
+    which: { meaning: "哪一个", phonetic: "/wɪtʃ/" },
+    worries: { meaning: "担心；没关系", phonetic: "/ˈwɜːriz/" },
+    yang: { meaning: "杨（名字）", phonetic: "/jɑːŋ/" },
+    you: { meaning: "你；你们", phonetic: "/juː/" },
+    your: { meaning: "你的；你们的", phonetic: "/jʊr/" }
+  };
+
+  const CORE_HINTS = {
+    "q-1": { word: "quotation", meaning: "报价单", phonetic: "/kwoʊˈteɪʃən/" },
+    "q-2": { word: "reply", meaning: "回复", phonetic: "/rɪˈplaɪ/" },
+    "q-3": { word: "target", meaning: "目标", phonetic: "/ˈtɑːrɡɪt/" },
+    "q-4": { word: "customize", meaning: "定制", phonetic: "/ˈkʌstəmaɪz/" },
+    "q-5": { word: "reliable", meaning: "可靠的", phonetic: "/rɪˈlaɪəbəl/" },
+    "q-6": { word: "negotiate", meaning: "谈判；协商", phonetic: "/nɪˈɡoʊʃieɪt/" },
+    "q-7": { word: "shipment", meaning: "货物；装运", phonetic: "/ˈʃɪpmənt/" }
+  };
+
+  const TRAVEL_SET = {
+    id: "set-travel",
+    name: "旅行日常闲聊",
+    description: "像路上真实聊天一样，短一点、自然一点、马上能用",
+    createdAt: 3,
+    questions: [
+      { id: "q-travel-1", prompt: "OMG，这里也太美了吧！", answers: ["OMG, this place is amazing", "Oh my God, this place is amazing"], note: "看到好风景时脱口而出" },
+      { id: "q-travel-2", prompt: "嗨，最近怎么样？", answers: ["Hey, what's up", "Hey, how's it going"], note: "很随意的打招呼" },
+      { id: "q-travel-3", prompt: "我叫杨，你怎么称呼？", answers: ["I'm Yang. What should I call you", "I'm Yang. What's your name"], note: "认识新朋友" },
+      { id: "q-travel-4", prompt: "你从哪里来？", answers: ["Where are you from"], note: "旅行聊天高频句" },
+      { id: "q-travel-5", prompt: "这是你第一次来这儿吗？", answers: ["Is this your first time here"], note: "接着聊旅行经历" },
+      { id: "q-travel-6", prompt: "我就来玩几天。", answers: ["I'm just here for a few days"], note: "简单说明行程" },
+      { id: "q-travel-7", prompt: "今天天气也太好了。", answers: ["The weather is so nice today"], note: "最自然的开场话题" },
+      { id: "q-travel-8", prompt: "这个海滩太绝了。", answers: ["This beach is gorgeous", "This beach is amazing"], note: "gorgeous 就是美极了" },
+      { id: "q-travel-9", prompt: "能顺手帮我拍张照吗？", answers: ["Could you take a quick photo for me", "Can you take a quick photo for me"], note: "quick 让语气更像随口请求" },
+      { id: "q-travel-10", prompt: "要不要我也帮你拍一张？", answers: ["Want me to take one for you", "Do you want me to take one for you"], note: "帮别人拍照时很实用" },
+      { id: "q-travel-11", prompt: "附近有啥好吃的吗？", answers: ["Do you know any good food around here", "Any good food around here"], note: "不必每次都说完整长句" },
+      { id: "q-travel-12", prompt: "你最喜欢哪道当地菜？", answers: ["What's your favorite local dish"], note: "聊当地美食" },
+      { id: "q-travel-13", prompt: "这个辣吗？", answers: ["Is this spicy", "Is it spicy"], note: "点餐前确认辣度" },
+      { id: "q-travel-14", prompt: "去海滩怎么走？", answers: ["How do I get to the beach"], note: "直接自然的问路方式" },
+      { id: "q-travel-15", prompt: "远吗？走路能到吗？", answers: ["Is it far? Can I walk there"], note: "继续确认距离" },
+      { id: "q-travel-16", prompt: "我是在这里左转吗？", answers: ["Do I turn left here", "Should I turn left here"], note: "确认方向" },
+      { id: "q-travel-17", prompt: "哪个海滩人少一点？", answers: ["Which beach is less crowded"], note: "找清静一点的地方" },
+      { id: "q-travel-18", prompt: "哪里看日落比较好？", answers: ["Where's a good spot for sunset", "Where is a good spot for sunset"], note: "spot 是很口语的地点说法" },
+      { id: "q-travel-19", prompt: "今天浪有点大。", answers: ["The waves are pretty strong today"], note: "pretty 在这里表示挺、相当" },
+      { id: "q-travel-20", prompt: "要不要去喝杯咖啡？", answers: ["Wanna grab a coffee", "Do you want to grab a coffee"], note: "wanna 和 grab 都很口语" },
+      { id: "q-travel-21", prompt: "你玩 Instagram 吗？", answers: ["Are you on Instagram"], note: "旅途中交换联系方式" },
+      { id: "q-travel-22", prompt: "没事，慢慢来。", answers: ["No worries, take your time"], note: "比 No problem 更松弛" },
+      { id: "q-travel-23", prompt: "跟你聊天挺开心的。", answers: ["It was really nice talking to you", "Nice talking to you"], note: "结束聊天前很自然" },
+      { id: "q-travel-24", prompt: "旅途愉快，回头见。", answers: ["Have fun on your trip. See you around", "Have a great trip. See you around"], note: "轻松道别" }
+    ]
+  };
+
+  const defaultData = {
+    sets: [
+      {
+        id: "set-daily",
+        name: "外贸邮件常用句",
+        description: "开发信、报价和跟进中的高频表达",
+        createdAt: Date.now(),
+        questions: [
+          { id: "q-1", prompt: "请查收附件中的报价单。", answers: ["Please find the quotation attached", "Please find attached our quotation"], note: "quotation 也可以换成 quote", hint: CORE_HINTS["q-1"] },
+          { id: "q-2", prompt: "期待收到您的回复。", answers: ["I look forward to your reply", "Looking forward to your reply"], note: "邮件结尾常用", hint: CORE_HINTS["q-2"] },
+          { id: "q-3", prompt: "您的目标价格是多少？", answers: ["What is your target price", "What's your target price"], note: "", hint: CORE_HINTS["q-3"] },
+          { id: "q-4", prompt: "我们可以根据您的需求定制。", answers: ["We can customize it according to your requirements", "We can customize according to your requirements"], note: "requirements 也可换成 needs", hint: CORE_HINTS["q-4"] }
+        ]
+      },
+      {
+        id: "set-words",
+        name: "基础高频词",
+        description: "每天都值得复习的核心词汇",
+        createdAt: Date.now() + 1,
+        questions: [
+          { id: "q-5", prompt: "reliable", answers: ["可靠的", "值得信赖的"], note: "", hint: CORE_HINTS["q-5"] },
+          { id: "q-6", prompt: "negotiate", answers: ["谈判", "协商"], note: "", hint: CORE_HINTS["q-6"] },
+          { id: "q-7", prompt: "shipment", answers: ["货物", "装运", "运输的货物"], note: "", hint: CORE_HINTS["q-7"] }
+        ]
+      },
+      TRAVEL_SET
+    ],
+    mistakes: {},
+    stats: { attempts: 0, correct: 0, daily: {} },
+    settings: { shuffle: true, soundEffects: true, autoReadWrong: true },
+    migrations: { travelPackV1: true, travelPackV2: true, keywordHintsV1: true }
+  };
+
+  let data = loadData();
+  let currentView = "home";
+  let selectedSetId = "all";
+  let editingQuestion = null;
+  let editingSetId = null;
+  let session = loadSession();
+  let toastTimer = null;
+  let activeWord = null;
+  let activeAudio = null;
+  let audioContext = null;
+  let phoneticCache = loadPhoneticCache();
+  let nextEnglishVoiceGender = "male";
+  let lastEnglishVoiceGender = "male";
+
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+  const elements = {
+    pageTitle: $("#pageTitle"), pageEyebrow: $("#pageEyebrow"),
+    homeSetGrid: $("#homeSetGrid"), librarySetList: $("#librarySetList"), questionList: $("#questionList"),
+    libraryTitle: $("#libraryTitle"), libraryCount: $("#libraryCount"), librarySetFilter: $("#librarySetFilter"),
+    questionSearch: $("#questionSearch"), modalSetSelect: $("#modalSetSelect"), bulkQuestionInput: $("#bulkQuestionInput"),
+    setNameInput: $("#setNameInput"), setDescriptionInput: $("#setDescriptionInput"), toast: $("#toast"),
+    mistakeGroups: $("#mistakeGroups"), answerInput: $("#answerInput"), feedbackPanel: $("#feedbackPanel"),
+    importFileInput: $("#importFileInput")
+  };
+
+  bindEvents();
+  renderAll();
+  if (session) resumePractice();
+
+  function loadData() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return structuredClone(defaultData);
+      const parsed = JSON.parse(stored);
+      if (!Array.isArray(parsed.sets)) throw new Error("Invalid data");
+      return migrateData(parsed);
+    } catch (error) {
+      return structuredClone(defaultData);
+    }
+  }
+
+  function saveData() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function migrateData(parsed) {
+    parsed.mistakes = parsed.mistakes || {};
+    parsed.stats = parsed.stats || { attempts: 0, correct: 0 };
+    parsed.stats.daily = parsed.stats.daily || {};
+    parsed.settings = { ...defaultData.settings, ...(parsed.settings || {}) };
+    parsed.migrations = parsed.migrations || {};
+    parsed.sets.forEach(set => {
+      set.questions = Array.isArray(set.questions) ? set.questions : [];
+      set.questions.forEach(question => {
+        if (!Array.isArray(question.answers)) {
+          question.answers = typeof question.answer === "string" && question.answer.trim()
+            ? [question.answer.trim()]
+            : [];
+        }
+      });
+    });
+    if (!parsed.migrations.keywordHintsV1) {
+      parsed.sets.forEach(set => set.questions.forEach(question => {
+        if (!question.hint && CORE_HINTS[question.id]) question.hint = structuredClone(CORE_HINTS[question.id]);
+      }));
+      parsed.migrations.keywordHintsV1 = true;
+    }
+    if (!parsed.migrations.travelPackV1) {
+      if (!parsed.sets.some(set => set.id === TRAVEL_SET.id)) parsed.sets.push(structuredClone(TRAVEL_SET));
+      parsed.migrations.travelPackV1 = true;
+    }
+    if (!parsed.migrations.travelPackV2) {
+      const currentTravelSet = parsed.sets.find(set => set.id === TRAVEL_SET.id);
+      if (currentTravelSet) {
+        const customQuestions = currentTravelSet.questions.filter(question => !/^q-travel-\d+$/.test(question.id));
+        Object.assign(currentTravelSet, structuredClone(TRAVEL_SET));
+        currentTravelSet.questions.push(...customQuestions);
+      } else {
+        parsed.sets.push(structuredClone(TRAVEL_SET));
+      }
+      parsed.migrations.travelPackV2 = true;
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    return parsed;
+  }
+
+  function bindEvents() {
+    $$(".nav-item").forEach(button => button.addEventListener("click", () => handleNavigation(button.dataset.view)));
+    $("#menuButton").addEventListener("click", () => setMobileMenu(true));
+    $("#sidebarScrim").addEventListener("click", () => setMobileMenu(false));
+
+    [$("#quickAddButton"), $("#bulkAddButton")].forEach(button => button.addEventListener("click", () => openQuestionModal()));
+    [$("#newSetButton"), $("#newSetSmallButton")].forEach(button => button.addEventListener("click", () => openSetModal()));
+    $$(".close-modal").forEach(button => button.addEventListener("click", () => closeModal(button.dataset.closeModal)));
+    $$(".modal-backdrop").forEach(backdrop => backdrop.addEventListener("click", event => {
+      if (event.target === backdrop) closeModal(backdrop.id);
+    }));
+
+    $("#saveQuestionsButton").addEventListener("click", saveBulkQuestions);
+    $("#saveSetButton").addEventListener("click", saveNewSet);
+    $("#deleteSetButton").addEventListener("click", deleteEditingSet);
+    $("#manageSetButton").addEventListener("click", () => openSetModal(selectedSetId));
+    $("#saveEditButton").addEventListener("click", saveQuestionEdit);
+    $("#deleteQuestionButton").addEventListener("click", deleteEditingQuestion);
+    elements.questionSearch.addEventListener("input", renderQuestionList);
+    elements.librarySetFilter.addEventListener("change", event => selectLibrarySet(event.target.value));
+
+    $("#startAllButton").addEventListener("click", handlePrimaryPractice);
+    $("#startMistakesButton").addEventListener("click", () => startPractice("mistakes"));
+    $("#mistakePracticeButton").addEventListener("click", () => startPractice("mistakes"));
+    $("#answerForm").addEventListener("submit", submitAnswer);
+    $("#nextQuestionButton").addEventListener("click", nextQuestion);
+    $("#exitPracticeButton").addEventListener("click", pausePractice);
+    $("#speakPromptButton").addEventListener("click", playNextEnglishVoice);
+    $("#speakSlowButton").addEventListener("click", () => speakCurrentEnglish(0.7, lastEnglishVoiceGender));
+    $("#hintButton").addEventListener("click", revealKeywordHint);
+    $("#retryWrongButton").addEventListener("click", retrySessionWrong);
+    $("#backHomeButton").addEventListener("click", () => switchView("home"));
+
+    $("#exportButton").addEventListener("click", exportData);
+    $("#importButton").addEventListener("click", () => elements.importFileInput.click());
+    elements.importFileInput.addEventListener("change", importData);
+
+    $("#shuffleToggle").addEventListener("change", event => updateSetting("shuffle", event.target.checked));
+    $("#soundEffectsToggle").addEventListener("change", event => updateSetting("soundEffects", event.target.checked));
+    $("#autoReadToggle").addEventListener("change", event => updateSetting("autoReadWrong", event.target.checked));
+    $("#soundToggleButton").addEventListener("click", () => updateSetting("soundEffects", !data.settings.soundEffects));
+    $("#playUsButton").addEventListener("click", () => playPronunciation("us"));
+    $("#playUkButton").addEventListener("click", () => playPronunciation("uk"));
+    elements.answerInput.addEventListener("input", () => {
+      if (!session || session.answered) return;
+      session.draft = elements.answerInput.value;
+      if (session.questionAttempts > 0 && elements.feedbackPanel.classList.contains("retry")) {
+        renderAttemptReview(session.questions[session.index], session.draft);
+      }
+      persistSession();
+    });
+
+    document.addEventListener("click", event => {
+      const wordButton = event.target.closest(".word-token");
+      if (wordButton) openWordCoach(wordButton.dataset.word);
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        $$(".modal-backdrop.open").forEach(modal => closeModal(modal.id));
+        setMobileMenu(false);
+      }
+      if (event.key === "ArrowDown" && currentView === "practice" && !$$(".modal-backdrop.open").length) {
+        event.preventDefault();
+        revealKeywordHint();
+      }
+      if (event.key === "ArrowUp" && currentView === "practice" && !$$(".modal-backdrop.open").length) {
+        event.preventDefault();
+        speakCurrentEnglish(0.9, lastEnglishVoiceGender);
+      }
+    });
+  }
+
+  function handleNavigation(view) {
+    if (view === "home" && session && !session.completed) {
+      resumePractice();
+      return;
+    }
+    switchView(view);
+  }
+
+  function handlePrimaryPractice() {
+    if (session && !session.completed) {
+      resumePractice();
+      return;
+    }
+    startPractice("all");
+  }
+
+  function switchView(view) {
+    currentView = view;
+    $$(".view").forEach(section => section.classList.remove("active"));
+    const navigationView = ["practice", "result"].includes(view) ? "home" : view;
+    $$(".nav-item").forEach(button => button.classList.toggle("active", button.dataset.view === navigationView));
+    setMobileMenu(false);
+
+    const page = view === "mistakes" ? "mistakes" : view;
+    const target = $(`#${page}View`);
+    if (target) target.classList.add("active");
+
+    const titles = {
+      home: ["DAILY PRACTICE", "今天继续开口、动手、记住"],
+      library: ["QUESTION LIBRARY", "管理你的个人英语题库"],
+      mistakes: ["REVIEW & REPEAT", "把每一道错题变成已经会做的题"],
+      practice: ["FOCUS MODE", "专心完成这一轮练习"],
+      result: ["PRACTICE RESULT", "这一轮，你又多记住了一点"]
+    };
+    const [eyebrow, title] = titles[view] || titles.home;
+    elements.pageEyebrow.textContent = eyebrow;
+    elements.pageTitle.textContent = title;
+    $("#quickAddButton").style.visibility = ["practice", "result"].includes(view) ? "hidden" : "visible";
+
+    if (view === "library") renderLibrary();
+    if (view === "mistakes") renderMistakes();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderAll() {
+    renderSettings();
+    renderStats();
+    renderResumeState();
+    renderSetCards();
+    renderSetOptions();
+    renderLibrary();
+    renderMistakes();
+  }
+
+  function renderResumeState() {
+    const resumable = session && !session.completed;
+    $("#startAllButton").innerHTML = resumable ? `继续第 ${session.index + 1} 题 <span>→</span>` : `开始练习 <span>→</span>`;
+    if (resumable) {
+      $("#homeSummary").textContent = `本轮进度已保存：第 ${session.index + 1} / ${session.questions.length} 题，返回后从这里继续。`;
+    }
+  }
+
+  function allQuestions() {
+    return data.sets.flatMap(set => set.questions.map(question => ({ ...question, setId: set.id, setName: set.name })));
+  }
+
+  function mistakeQuestions() {
+    return allQuestions().filter(question => data.mistakes[question.id]);
+  }
+
+  function renderStats() {
+    const total = allQuestions().length;
+    const mistakes = mistakeQuestions().length;
+    const accuracy = data.stats.attempts ? Math.round(data.stats.correct / data.stats.attempts * 100) : 0;
+    $("#metricQuestions").textContent = total;
+    $("#metricMistakes").textContent = mistakes;
+    $("#metricAccuracy").textContent = `${accuracy}%`;
+    $("#metricAttempts").textContent = data.stats.attempts ? `已作答 ${data.stats.attempts} 次` : "尚未开始练习";
+    const today = data.stats.daily[todayKey()] || 0;
+    $("#metricToday").textContent = today;
+    $("#metricTodayNote").textContent = today >= 20 ? "今天练得很扎实" : today >= 8 ? "状态已经热起来了" : today ? "保持这个节奏" : "从一道题开始热身";
+    $("#navMistakeCount").textContent = mistakes;
+    $("#sidebarTotal").textContent = `${total} 道题`;
+    $("#sidebarAccuracy").textContent = `累计正确率 ${accuracy}%`;
+    $("#sidebarProgress").style.width = `${accuracy}%`;
+    $("#homeSummary").textContent = mistakes
+      ? `题库中现有 ${total} 道题，其中 ${mistakes} 道等着你重新拿下。`
+      : `题库中现有 ${total} 道题，答错的题会自动进入错题本。`;
+  }
+
+  function renderSettings() {
+    $("#shuffleToggle").checked = data.settings.shuffle;
+    $("#soundEffectsToggle").checked = data.settings.soundEffects;
+    $("#autoReadToggle").checked = data.settings.autoReadWrong;
+    const button = $("#soundToggleButton");
+    button.classList.toggle("muted", !data.settings.soundEffects);
+    button.setAttribute("aria-pressed", String(data.settings.soundEffects));
+    button.setAttribute("aria-label", data.settings.soundEffects ? "关闭反馈音效" : "开启反馈音效");
+    button.title = data.settings.soundEffects ? "关闭反馈音效" : "开启反馈音效";
+  }
+
+  function updateSetting(key, value) {
+    data.settings[key] = value;
+    saveData();
+    renderSettings();
+    if (key === "soundEffects" && value) playFeedbackSound(true, true);
+  }
+
+  function renderSetCards() {
+    if (!data.sets.length) {
+      elements.homeSetGrid.innerHTML = emptyState("还没有题库", "创建第一个题库，然后录入你想练的内容。", "新建题库", "new-set");
+      bindEmptyActions();
+      return;
+    }
+    elements.homeSetGrid.innerHTML = data.sets.map((set, index) => {
+      const mistakes = set.questions.filter(q => data.mistakes[q.id]).length;
+      return `<article class="set-card">
+        <div class="set-card-top"><span class="set-index">SET ${String(index + 1).padStart(2, "0")}</span>${mistakes ? `<span class="mistake-chip">${mistakes} 道错题</span>` : ""}</div>
+        <h3>${escapeHtml(set.name)}</h3>
+        <p>${escapeHtml(set.description || "你的自定义练习题库")}</p>
+        <div class="set-card-footer"><span>${set.questions.length} 道题</span><button data-practice-set="${set.id}">开始练习 →</button></div>
+      </article>`;
+    }).join("");
+    $$('[data-practice-set]').forEach(button => button.addEventListener("click", () => startPractice("set", button.dataset.practiceSet)));
+  }
+
+  function renderSetOptions() {
+    const options = data.sets.map(set => `<option value="${set.id}">${escapeHtml(set.name)}（${set.questions.length}题）</option>`).join("");
+    elements.modalSetSelect.innerHTML = options;
+    elements.librarySetFilter.innerHTML = `<option value="all">全部题库</option>${options}`;
+    elements.librarySetFilter.value = selectedSetId;
+  }
+
+  function renderLibrary() {
+    renderSetOptions();
+    const allCount = allQuestions().length;
+    elements.librarySetList.innerHTML = `<button class="set-list-item ${selectedSetId === "all" ? "active" : ""}" data-library-set="all"><span>全部题目</span><span>${allCount}</span></button>` +
+      data.sets.map(set => `<button class="set-list-item ${selectedSetId === set.id ? "active" : ""}" data-library-set="${set.id}"><span>${escapeHtml(set.name)}</span><span>${set.questions.length}</span></button>`).join("");
+    $$('[data-library-set]').forEach(button => button.addEventListener("click", () => selectLibrarySet(button.dataset.librarySet)));
+    renderQuestionList();
+  }
+
+  function selectLibrarySet(setId) {
+    selectedSetId = setId;
+    elements.librarySetFilter.value = setId;
+    renderLibrary();
+  }
+
+  function renderQuestionList() {
+    const search = normalize(elements.questionSearch.value || "");
+    let questions = selectedSetId === "all" ? allQuestions() : allQuestions().filter(q => q.setId === selectedSetId);
+    questions = questions.filter(q => !search || normalize(`${q.prompt} ${q.answers.join(" ")}`).includes(search));
+    const set = data.sets.find(item => item.id === selectedSetId);
+    elements.libraryTitle.textContent = set ? set.name : "全部题目";
+    elements.libraryCount.textContent = `${questions.length} 道题`;
+    $("#manageSetButton").hidden = !set;
+
+    if (!questions.length) {
+      elements.questionList.innerHTML = emptyState(search ? "没搜到匹配题目" : "这个题库还是空的", search ? "换一个关键词试试。" : "录入一些题目，就可以开始练习了。", search ? "" : "录入题目", "add-questions");
+      bindEmptyActions();
+      return;
+    }
+
+    elements.questionList.innerHTML = questions.map((question, index) => `<div class="question-item">
+      <span class="question-number">${String(index + 1).padStart(2, "0")}</span>
+      <div class="question-copy"><span>QUESTION</span><strong>${renderInteractiveEnglish(question.prompt)}</strong></div>
+      <div class="answer-copy"><span>ANSWER</span><strong>${question.answers.map(renderInteractiveEnglish).join(" / ")}</strong></div>
+      <div class="question-actions">
+        <button data-speak-question="${question.id}" title="朗读" aria-label="朗读">▷</button>
+        <button data-edit-question="${question.id}" title="编辑" aria-label="编辑">…</button>
+      </div>
+    </div>`).join("");
+    $$('[data-speak-question]').forEach(button => button.addEventListener("click", () => {
+      const question = allQuestions().find(q => q.id === button.dataset.speakQuestion);
+      if (question) speakQuestionEnglish(question);
+    }));
+    $$('[data-edit-question]').forEach(button => button.addEventListener("click", () => openEditModal(button.dataset.editQuestion)));
+  }
+
+  function renderMistakes() {
+    const mistakes = mistakeQuestions();
+    $("#mistakePracticeButton").disabled = !mistakes.length;
+    if (!mistakes.length) {
+      elements.mistakeGroups.innerHTML = emptyState("错题本现在是空的", "开始一轮练习，答错的题会自动收到这里。", "去练习", "practice-all");
+      bindEmptyActions();
+      return;
+    }
+    const groups = data.sets.map(set => ({ set, questions: mistakes.filter(q => q.setId === set.id) })).filter(group => group.questions.length);
+    elements.mistakeGroups.innerHTML = groups.map(({ set, questions }) => `<section class="mistake-group">
+      <header><h3>${escapeHtml(set.name)}</h3><span>${questions.length} 道</span></header>
+      ${questions.map(question => {
+        const record = data.mistakes[question.id];
+        return `<div class="mistake-row"><strong>${renderInteractiveEnglish(question.prompt)}</strong><span>${question.answers.map(renderInteractiveEnglish).join(" / ")}</span><small>错过 ${record.count || 1} 次</small></div>`;
+      }).join("")}
+    </section>`).join("");
+  }
+
+  function openQuestionModal(preferredSetId) {
+    if (!data.sets.length) {
+      openSetModal();
+      showToast("请先创建一个题库");
+      return;
+    }
+    renderSetOptions();
+    const targetId = preferredSetId || (selectedSetId !== "all" ? selectedSetId : data.sets[0].id);
+    elements.modalSetSelect.value = targetId;
+    elements.bulkQuestionInput.value = "";
+    openModal("questionModal");
+    setTimeout(() => elements.bulkQuestionInput.focus(), 50);
+  }
+
+  function saveBulkQuestions() {
+    const set = data.sets.find(item => item.id === elements.modalSetSelect.value);
+    const lines = elements.bulkQuestionInput.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const parsed = [];
+    const invalid = [];
+    lines.forEach((line, index) => {
+      const delimiter = line.includes("|") ? "|" : "\t";
+      const parts = line.split(delimiter).map(part => part.trim());
+      if (parts.length < 2 || !parts[0] || !parts[1]) {
+        invalid.push(index + 1);
+        return;
+      }
+      const prompt = parts[0];
+      const answerText = parts[1];
+      const answers = answerText.split("/").map(answer => answer.trim()).filter(Boolean);
+      const hintParts = (parts.slice(2).join(delimiter) || "").split(/[,，]/).map(value => value.trim());
+      const hint = hintParts[0] ? { word: hintParts[0], meaning: hintParts[1] || "关键词提示", phonetic: hintParts[2] || "" } : undefined;
+      parsed.push({ id: uid("q"), prompt, answers, note: "", ...(hint ? { hint } : {}) });
+    });
+    if (!set || !parsed.length) {
+      showToast(invalid.length ? `第 ${invalid.join("、")} 行格式不对` : "请先输入题目和答案");
+      return;
+    }
+    set.questions.push(...parsed);
+    saveData();
+    closeModal("questionModal");
+    renderAll();
+    showToast(`已加入 ${parsed.length} 道题${invalid.length ? `，略过 ${invalid.length} 行` : ""}`);
+  }
+
+  function openSetModal(setId) {
+    const set = data.sets.find(item => item.id === setId);
+    editingSetId = set ? set.id : null;
+    elements.setNameInput.value = set ? set.name : "";
+    elements.setDescriptionInput.value = set ? set.description || "" : "";
+    $("#setModalTitle").textContent = set ? "管理题库" : "新建题库";
+    $("#saveSetButton").textContent = set ? "保存修改" : "创建题库";
+    $("#deleteSetButton").hidden = !set;
+    openModal("setModal");
+    setTimeout(() => elements.setNameInput.focus(), 50);
+  }
+
+  function saveNewSet() {
+    const name = elements.setNameInput.value.trim();
+    if (!name) {
+      showToast("请输入题库名称");
+      elements.setNameInput.focus();
+      return;
+    }
+    if (editingSetId) {
+      const set = data.sets.find(item => item.id === editingSetId);
+      if (!set) return;
+      set.name = name;
+      set.description = elements.setDescriptionInput.value.trim();
+      saveData();
+      closeModal("setModal");
+      renderAll();
+      showToast("题库信息已更新");
+      return;
+    }
+    const set = { id: uid("set"), name, description: elements.setDescriptionInput.value.trim(), createdAt: Date.now(), questions: [] };
+    data.sets.push(set);
+    selectedSetId = set.id;
+    saveData();
+    closeModal("setModal");
+    renderAll();
+    showToast("题库已创建，现在可以录题了");
+    setTimeout(() => openQuestionModal(set.id), 220);
+  }
+
+  function deleteEditingSet() {
+    const set = data.sets.find(item => item.id === editingSetId);
+    if (!set || !window.confirm(`确定删除题库“${set.name}”和其中 ${set.questions.length} 道题吗？`)) return;
+    set.questions.forEach(question => delete data.mistakes[question.id]);
+    if (session?.questions.some(question => question.setId === set.id)) clearSession();
+    data.sets = data.sets.filter(item => item.id !== set.id);
+    selectedSetId = "all";
+    editingSetId = null;
+    saveData();
+    closeModal("setModal");
+    renderAll();
+    showToast("题库已删除");
+  }
+
+  function openEditModal(questionId) {
+    const question = allQuestions().find(q => q.id === questionId);
+    if (!question) return;
+    editingQuestion = { questionId, setId: question.setId };
+    $("#editPromptInput").value = question.prompt;
+    $("#editAnswerInput").value = question.answers.join(" / ");
+    $("#editNoteInput").value = question.note || "";
+    $("#editHintWordInput").value = question.hint?.word || "";
+    $("#editHintMeaningInput").value = question.hint?.meaning || "";
+    $("#editHintPhoneticInput").value = question.hint?.phonetic || "";
+    openModal("editModal");
+  }
+
+  function saveQuestionEdit() {
+    if (!editingQuestion) return;
+    const set = data.sets.find(item => item.id === editingQuestion.setId);
+    const question = set && set.questions.find(item => item.id === editingQuestion.questionId);
+    const prompt = $("#editPromptInput").value.trim();
+    const answers = $("#editAnswerInput").value.split("/").map(value => value.trim()).filter(Boolean);
+    if (!question || !prompt || !answers.length) {
+      showToast("题目和正确答案不能为空");
+      return;
+    }
+    question.prompt = prompt;
+    question.answers = answers;
+    question.note = $("#editNoteInput").value.trim();
+    const hintWord = $("#editHintWordInput").value.trim();
+    question.hint = hintWord ? {
+      word: hintWord,
+      meaning: $("#editHintMeaningInput").value.trim() || "关键词提示",
+      phonetic: $("#editHintPhoneticInput").value.trim()
+    } : undefined;
+    if (session) {
+      session.questions = session.questions.map(item => item.id === question.id
+        ? { ...question, setId: set.id, setName: set.name }
+        : item);
+      persistSession();
+    }
+    saveData();
+    closeModal("editModal");
+    renderAll();
+    showToast("题目已更新");
+  }
+
+  function deleteEditingQuestion() {
+    if (!editingQuestion) return;
+    const set = data.sets.find(item => item.id === editingQuestion.setId);
+    const question = set && set.questions.find(item => item.id === editingQuestion.questionId);
+    if (!question || !window.confirm(`确定删除题目“${question.prompt}”吗？`)) return;
+    if (session?.questions.some(item => item.id === question.id)) clearSession();
+    set.questions = set.questions.filter(item => item.id !== question.id);
+    delete data.mistakes[question.id];
+    saveData();
+    closeModal("editModal");
+    renderAll();
+    showToast("题目已删除");
+  }
+
+  function startPractice(mode, setId, suppliedQuestions) {
+    if (session && !session.completed && !suppliedQuestions) {
+      const replace = window.confirm("当前练习进度已经保存。确定开始一轮新的练习吗？");
+      if (!replace) {
+        resumePractice();
+        return;
+      }
+    }
+    let questions = suppliedQuestions || (mode === "mistakes"
+      ? mistakeQuestions()
+      : mode === "set"
+        ? allQuestions().filter(q => q.setId === setId)
+        : allQuestions());
+    if (!questions.length) {
+      showToast(mode === "mistakes" ? "目前没有错题" : "题库还是空的，先录几道题吧");
+      return;
+    }
+    questions = data.settings.shuffle ? shuffle([...questions]) : [...questions];
+    session = {
+      mode, setId, questions, index: 0, correct: 0, wrong: [], answered: false,
+      draft: "", lastTyped: "", lastCorrect: null, hintRevealed: false, questionAttempts: 0,
+      startedAt: Date.now(), completed: false
+    };
+    persistSession();
+    switchView("practice");
+    renderPracticeQuestion();
+  }
+
+  function resumePractice() {
+    if (!session || session.completed) {
+      switchView("home");
+      return;
+    }
+    switchView("practice");
+    renderPracticeQuestion({ restore: true });
+  }
+
+  function pausePractice() {
+    if (session && !session.answered) session.draft = elements.answerInput.value;
+    persistSession();
+    switchView("home");
+    renderResumeState();
+  }
+
+  function renderPracticeQuestion(options = {}) {
+    const question = session.questions[session.index];
+    if (!question) {
+      clearSession();
+      switchView("home");
+      return;
+    }
+    if (!options.restore) {
+      session.answered = false;
+      session.draft = "";
+      session.lastTyped = "";
+      session.lastCorrect = null;
+      session.hintRevealed = false;
+      session.questionAttempts = 0;
+    }
+    $("#practiceCurrent").textContent = session.index + 1;
+    $("#practiceTotal").textContent = session.questions.length;
+    $("#practiceProgressBar").style.width = `${session.index / session.questions.length * 100}%`;
+    $("#practiceSetName").textContent = question.setName;
+    $("#practicePrompt").innerHTML = renderInteractiveEnglish(question.prompt);
+    $("#practiceHint").textContent = "在下方输入你的答案，回车即可提交";
+    elements.answerInput.value = session.answered ? session.lastTyped : (session.draft || "");
+    elements.answerInput.disabled = Boolean(session.answered);
+    $(".answer-submit").disabled = Boolean(session.answered);
+    $("#hintButton").disabled = Boolean(session.answered);
+    elements.feedbackPanel.className = "feedback";
+    $("#nextQuestionButton").hidden = false;
+    $("#questionStage").classList.remove("is-correct", "is-wrong");
+    $("#feedbackBurst").replaceChildren();
+    updateAttemptCounter();
+    hideKeywordHint();
+    if (session.hintRevealed) revealKeywordHint({ restored: true });
+    if (session.answered && typeof session.lastCorrect === "boolean") {
+      showFeedback(session.lastCorrect, question, session.lastTyped, { silent: true, focus: false });
+    } else {
+      if (session.questionAttempts > 0 && session.lastTyped) {
+        showRetryFeedback(question, session.lastTyped, { silent: true, focus: false });
+      }
+      setTimeout(() => elements.answerInput.focus(), 80);
+    }
+    persistSession();
+  }
+
+  function submitAnswer(event) {
+    event.preventDefault();
+    if (!session || session.answered) return;
+    const typed = elements.answerInput.value.trim();
+    if (!typed) {
+      showToast("先输入你的答案");
+      return;
+    }
+    const question = session.questions[session.index];
+    const correct = acceptedAnswersFor(question).some(answer => isAccepted(typed, answer));
+    session.questionAttempts = Math.min((session.questionAttempts || 0) + 1, MAX_ATTEMPTS);
+    session.draft = typed;
+    session.lastTyped = typed;
+    session.lastCorrect = correct;
+    if (!correct && session.questionAttempts < MAX_ATTEMPTS) {
+      showRetryFeedback(question, typed);
+      updateAttemptCounter();
+      persistSession();
+      return;
+    }
+
+    session.answered = true;
+    data.stats.attempts += 1;
+    data.stats.daily[todayKey()] = (data.stats.daily[todayKey()] || 0) + 1;
+    if (correct) {
+      session.correct += 1;
+      data.stats.correct += 1;
+      delete data.mistakes[question.id];
+    } else {
+      session.wrong.push(question);
+      const previous = data.mistakes[question.id] || { count: 0 };
+      data.mistakes[question.id] = { count: previous.count + 1, lastWrongAt: Date.now(), lastAnswer: typed };
+    }
+    saveData();
+    showFeedback(correct, question, typed);
+    persistSession();
+    renderStats();
+    elements.answerInput.disabled = true;
+    $(".answer-submit").disabled = true;
+    $("#hintButton").disabled = true;
+    updateAttemptCounter();
+  }
+
+  function showRetryFeedback(question, typed, options = {}) {
+    session.lastCorrect = false;
+    session.lastTyped = typed;
+    session.draft = typed;
+    const remaining = MAX_ATTEMPTS - session.questionAttempts;
+    elements.feedbackPanel.className = "feedback show retry";
+    $("#feedbackIcon").textContent = "!";
+    $("#feedbackTitle").textContent = "有几个词需要再想想";
+    renderAttemptReview(question, typed);
+    $("#feedbackNote").textContent = `第 ${session.questionAttempts} 次未通过，还有 ${remaining} 次机会`;
+    $("#nextQuestionButton").hidden = true;
+    if (!options.silent) playFeedbackSound(false);
+    if (!options.silent) animateFeedback(false);
+    persistSession();
+    if (options.focus !== false) {
+      elements.answerInput.focus();
+      elements.answerInput.setSelectionRange(elements.answerInput.value.length, elements.answerInput.value.length);
+    }
+  }
+
+  function renderAttemptReview(question, typed) {
+    const review = buildAttemptReview(question, typed);
+    $("#feedbackText").innerHTML = `<span class="feedback-label">检查一下：</span><span class="attempt-review">${review}</span>`;
+  }
+
+  function updateAttemptCounter() {
+    if (!session) return;
+    const used = Math.min(session.questionAttempts || 0, MAX_ATTEMPTS);
+    if (session.answered) {
+      $("#attemptCounter").textContent = session.lastCorrect
+        ? `第 ${used} 次答对`
+        : `${MAX_ATTEMPTS} 次已用完`;
+      return;
+    }
+    $("#attemptCounter").textContent = `第 ${Math.min(used + 1, MAX_ATTEMPTS)} 次 / 共 ${MAX_ATTEMPTS} 次`;
+  }
+
+  function buildAttemptReview(question, typed) {
+    const typedTokens = tokenizeReviewText(typed);
+    const comparisons = acceptedAnswersFor(question).map((answer, index) => ({
+      ...alignAnswerTokens(typedTokens, tokenizeReviewText(answer)),
+      index
+    })).sort((a, b) => a.distance - b.distance || a.index - b.index);
+    const operations = comparisons[0]?.operations || typedTokens.map(token => ({ type: "wrong", token }));
+    return operations.map(operation => {
+      if (operation.type === "missing") {
+        return `<span class="attempt-token missing" aria-label="缺少一个词">____</span>`;
+      }
+      const className = operation.type === "match" ? "attempt-token" : "attempt-token wrong";
+      return `<span class="${className}">${escapeHtml(operation.token)}</span>`;
+    }).join("");
+  }
+
+  function tokenizeReviewText(value) {
+    return normalizeSurface(value).match(/[a-z]+|\d+(?:\.\d+)?|[\u4e00-\u9fff]+/g) || [];
+  }
+
+  function alignAnswerTokens(typedTokens, expectedTokens) {
+    const typedLength = typedTokens.length;
+    const expectedLength = expectedTokens.length;
+    const costs = Array.from({ length: typedLength + 1 }, () => Array(expectedLength + 1).fill(0));
+    for (let typedIndex = 0; typedIndex <= typedLength; typedIndex += 1) costs[typedIndex][0] = typedIndex;
+    for (let expectedIndex = 0; expectedIndex <= expectedLength; expectedIndex += 1) costs[0][expectedIndex] = expectedIndex;
+    for (let typedIndex = 1; typedIndex <= typedLength; typedIndex += 1) {
+      for (let expectedIndex = 1; expectedIndex <= expectedLength; expectedIndex += 1) {
+        const same = normalizeReviewToken(typedTokens[typedIndex - 1]) === normalizeReviewToken(expectedTokens[expectedIndex - 1]);
+        costs[typedIndex][expectedIndex] = Math.min(
+          costs[typedIndex - 1][expectedIndex - 1] + (same ? 0 : 1),
+          costs[typedIndex - 1][expectedIndex] + 1,
+          costs[typedIndex][expectedIndex - 1] + 1
+        );
+      }
+    }
+
+    const operations = [];
+    let typedIndex = typedLength;
+    let expectedIndex = expectedLength;
+    while (typedIndex > 0 || expectedIndex > 0) {
+      if (typedIndex > 0 && expectedIndex > 0) {
+        const same = normalizeReviewToken(typedTokens[typedIndex - 1]) === normalizeReviewToken(expectedTokens[expectedIndex - 1]);
+        const diagonalCost = costs[typedIndex - 1][expectedIndex - 1] + (same ? 0 : 1);
+        if (costs[typedIndex][expectedIndex] === diagonalCost) {
+          operations.push({ type: same ? "match" : "wrong", token: typedTokens[typedIndex - 1] });
+          typedIndex -= 1;
+          expectedIndex -= 1;
+          continue;
+        }
+      }
+      if (typedIndex > 0 && costs[typedIndex][expectedIndex] === costs[typedIndex - 1][expectedIndex] + 1) {
+        operations.push({ type: "wrong", token: typedTokens[typedIndex - 1] });
+        typedIndex -= 1;
+        continue;
+      }
+      operations.push({ type: "missing", token: "" });
+      expectedIndex -= 1;
+    }
+    operations.reverse();
+    return { distance: costs[typedLength][expectedLength], operations };
+  }
+
+  function normalizeReviewToken(value) {
+    return normalizeSurface(value);
+  }
+
+  function showFeedback(correct, question, typed, options = {}) {
+    session.lastCorrect = correct;
+    session.lastTyped = typed;
+    session.draft = typed;
+    const panel = elements.feedbackPanel;
+    panel.className = `feedback show ${correct ? "correct" : "wrong"}`;
+    $("#feedbackIcon").textContent = correct ? "✓" : "×";
+    $("#feedbackTitle").textContent = correct ? "答对了" : "这题还差一点";
+    const correctAnswers = question.answers.map(renderInteractiveEnglish).join(" / ");
+    $("#feedbackText").innerHTML = correct
+      ? `<span class="feedback-label">正确答案：</span>${correctAnswers}`
+      : `<span class="feedback-label">你的答案：</span>${renderInteractiveEnglish(typed)}<br><span class="feedback-label">正确答案：</span>${correctAnswers}`;
+    $("#feedbackNote").textContent = question.note || "";
+    $("#nextQuestionButton").textContent = session.index === session.questions.length - 1 ? "查看结果 →" : "下一题 →";
+    $("#nextQuestionButton").hidden = false;
+    if (!options.silent) playFeedbackSound(correct);
+    if (!options.silent) animateFeedback(correct);
+    if (!options.silent && !correct && data.settings.autoReadWrong && /[a-zA-Z]/.test(question.answers[0])) {
+      setTimeout(() => speak(question.answers[0], "en-US"), 380);
+    }
+    if (options.focus !== false) $("#nextQuestionButton").focus();
+    persistSession();
+  }
+
+  function nextQuestion() {
+    if (!session || !session.answered) return;
+    if (session.index < session.questions.length - 1) {
+      session.index += 1;
+      session.answered = false;
+      session.draft = "";
+      session.lastTyped = "";
+      session.lastCorrect = null;
+      session.hintRevealed = false;
+      session.questionAttempts = 0;
+      persistSession();
+      renderPracticeQuestion();
+    } else {
+      showResult();
+    }
+  }
+
+  function showResult() {
+    const total = session.questions.length;
+    const score = Math.round(session.correct / total * 100);
+    $("#resultScore").textContent = `${score}%`;
+    $("#resultCorrect").textContent = session.correct;
+    $("#resultWrong").textContent = session.wrong.length;
+    $("#resultTotal").textContent = total;
+    $("#resultTitle").textContent = score === 100 ? "全部拿下，这轮很稳" : score >= 80 ? "已经很不错，再收个尾" : "已经找到该重点练的地方";
+    $("#resultText").textContent = session.wrong.length ? `本轮有 ${session.wrong.length} 道错题，现在趁热再做一次最有效。` : "本轮没有留下错题，可以换一组内容继续。";
+    $("#retryWrongButton").style.display = session.wrong.length ? "inline-block" : "none";
+    $("#practiceProgressBar").style.width = "100%";
+    session.completed = true;
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    renderResultCelebration(score);
+    switchView("result");
+    renderAll();
+  }
+
+  function retrySessionWrong() {
+    if (session && session.wrong.length) startPractice("retry", null, session.wrong);
+  }
+
+  function loadSession() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY));
+      if (!saved || saved.completed || !Array.isArray(saved.questionIds)) return null;
+      const catalog = new Map(allQuestions().map(question => [question.id, question]));
+      const questions = saved.questionIds.map(id => catalog.get(id)).filter(Boolean);
+      if (!questions.length) return null;
+      const wrong = (saved.wrongIds || []).map(id => catalog.get(id)).filter(Boolean);
+      return {
+        mode: saved.mode || "all",
+        setId: saved.setId || null,
+        questions,
+        index: Math.min(Math.max(Number(saved.index) || 0, 0), questions.length - 1),
+        correct: Number(saved.correct) || 0,
+        wrong,
+        answered: Boolean(saved.answered),
+        draft: saved.draft || "",
+        lastTyped: saved.lastTyped || "",
+        lastCorrect: typeof saved.lastCorrect === "boolean" ? saved.lastCorrect : null,
+        hintRevealed: Boolean(saved.hintRevealed),
+        questionAttempts: Math.min(Math.max(Number(saved.questionAttempts) || (saved.answered ? 1 : 0), 0), MAX_ATTEMPTS),
+        startedAt: saved.startedAt || Date.now(),
+        completed: false
+      };
+    } catch (error) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+  }
+
+  function persistSession() {
+    if (!session || session.completed) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      mode: session.mode,
+      setId: session.setId,
+      questionIds: session.questions.map(question => question.id),
+      index: session.index,
+      correct: session.correct,
+      wrongIds: session.wrong.map(question => question.id),
+      answered: session.answered,
+      draft: session.draft || "",
+      lastTyped: session.lastTyped || "",
+      lastCorrect: session.lastCorrect,
+      hintRevealed: session.hintRevealed,
+      questionAttempts: session.questionAttempts || 0,
+      startedAt: session.startedAt
+    }));
+  }
+
+  function clearSession() {
+    session = null;
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    renderResumeState();
+  }
+
+  async function revealKeywordHint(options = {}) {
+    if (!session || currentView !== "practice") return;
+    if (session.answered && !options.restored) return;
+    const question = session.questions[session.index];
+    if (!question) return;
+    session.hintRevealed = true;
+    persistSession();
+    $("#hintButton").setAttribute("aria-pressed", "true");
+    const hint = resolveQuestionHint(question);
+    renderKeywordHint(hint);
+    if (hint.phonetic) return;
+
+    const lookup = normalizeLookupWord(hint.word);
+    const builtIn = BUILT_IN_PHONETICS[lookup];
+    if (builtIn) {
+      updateKeywordHintPhonetic(question.id, hint.word, builtIn.us);
+      return;
+    }
+    try {
+      const result = await lookupPhonetics(lookup);
+      updateKeywordHintPhonetic(question.id, hint.word, result.us.ipa);
+    } catch (error) {
+      updateKeywordHintPhonetic(question.id, hint.word, "音标暂不可用");
+    }
+  }
+
+  function resolveQuestionHint(question) {
+    const nextAnswerHint = resolveNextAnswerHint(question, elements.answerInput.value);
+    if (nextAnswerHint) return nextAnswerHint;
+    if (question.hint?.word) return { ...question.hint };
+    const stopWords = new Set(["about", "after", "again", "also", "and", "are", "can", "could", "do", "does", "for", "from", "have", "here", "how", "i", "in", "is", "it", "me", "my", "of", "our", "please", "should", "the", "this", "to", "we", "what", "where", "which", "with", "you", "your"]);
+    const source = [...acceptedAnswersFor(question), question.prompt].join(" ");
+    const candidates = source.match(/[A-Za-z]+(?:['’][A-Za-z]+)?/g) || [];
+    const word = candidates
+      .map(candidate => candidate.replace(/’/g, "'"))
+      .filter(candidate => !stopWords.has(candidate.toLowerCase()))
+      .sort((a, b) => b.length - a.length)[0] || candidates[0] || "word";
+    return { word, meaning: "关键词提示", phonetic: "" };
+  }
+
+  function resolveNextAnswerHint(question, draft) {
+    const englishAnswers = acceptedAnswersFor(question).filter(answer => /[A-Za-z]/.test(answer));
+    if (!englishAnswers.length) return null;
+    const candidates = englishAnswers.map((answer, index) => ({
+      ...evaluateAnswerProgress(answer, draft),
+      index
+    })).sort((a, b) => b.score - a.score || a.index - b.index);
+    const best = candidates[0];
+    if (!best || !best.words.length) return null;
+    if (best.complete) {
+      return { word: "Ready", meaning: "句子已经写完，可以提交", phonetic: "/ˈredi/" };
+    }
+    return clueForWord(best.words[best.targetIndex]);
+  }
+
+  function evaluateAnswerProgress(answer, draft) {
+    const words = tokenizeEnglish(answer);
+    const typedWords = tokenizeEnglish(draft);
+    if (!typedWords.length) return { words, targetIndex: 0, score: 0, complete: false };
+    let score = 0;
+    let targetIndex = 0;
+    for (let index = 0; index < typedWords.length; index += 1) {
+      if (index >= words.length) {
+        return { words, targetIndex: words.length - 1, score: score - 120, complete: false };
+      }
+      const typed = normalizeHintToken(typedWords[index]);
+      const expected = normalizeHintToken(words[index]);
+      if (typed === expected) {
+        score += 100;
+        targetIndex = index + 1;
+        continue;
+      }
+      const isCurrentWord = index === typedWords.length - 1;
+      if (isCurrentWord && expected.startsWith(typed)) {
+        score += 55 + Math.round(typed.length / expected.length * 35);
+      } else {
+        score -= Math.min(90, levenshtein(typed, expected) * 12);
+      }
+      return { words, targetIndex: index, score, complete: false };
+    }
+    return {
+      words,
+      targetIndex: Math.min(targetIndex, words.length - 1),
+      score,
+      complete: targetIndex >= words.length
+    };
+  }
+
+  function tokenizeEnglish(value) {
+    return normalizeSurface(value).match(/[a-z]+/g) || [];
+  }
+
+  function normalizeHintToken(value) {
+    return normalizeSurface(value);
+  }
+
+  function clueForWord(word) {
+    const directKey = normalizeHintToken(word);
+    const lookup = normalizeLookupWord(word);
+    const clue = WORD_CLUES[directKey] || WORD_CLUES[lookup];
+    const phonetic = clue?.phonetic || BUILT_IN_PHONETICS[lookup]?.us || "";
+    return {
+      word,
+      meaning: clue?.meaning || "下一个要写的词",
+      phonetic
+    };
+  }
+
+  function renderKeywordHint(hint) {
+    const panel = $("#keywordHint");
+    panel.hidden = false;
+    panel.classList.remove("visible");
+    void panel.offsetWidth;
+    panel.classList.add("visible");
+    $("#keywordHintWord").textContent = hint.word;
+    $("#keywordHintWord").dataset.word = hint.word;
+    $("#keywordHintMeaning").textContent = hint.meaning || "关键词提示";
+    $("#keywordHintPhonetic").textContent = hint.phonetic || "正在查询音标…";
+  }
+
+  function updateKeywordHintPhonetic(questionId, word, phonetic) {
+    if (!session || session.questions[session.index]?.id !== questionId || !session.hintRevealed) return;
+    if (normalizeHintToken($("#keywordHintWord").dataset.word) !== normalizeHintToken(word)) return;
+    $("#keywordHintPhonetic").textContent = phonetic;
+  }
+
+  function hideKeywordHint() {
+    const panel = $("#keywordHint");
+    panel.hidden = true;
+    panel.classList.remove("visible");
+    $("#hintButton").setAttribute("aria-pressed", "false");
+  }
+
+  function acceptedAnswersFor(question) {
+    const answers = Array.isArray(question?.answers) ? question.answers.filter(Boolean) : [];
+    const builtIn = BUILT_IN_ANSWER_VARIANTS[question?.id];
+    if (!builtIn || !answers.some(answer => normalizeSurface(answer) === normalizeSurface(builtIn.anchor))) {
+      return answers;
+    }
+    return [...new Set([...answers, ...builtIn.variants])];
+  }
+
+  function isAccepted(input, answer) {
+    const a = normalize(input);
+    const b = normalize(answer);
+    return a === b;
+  }
+
+  function normalize(value) {
+    let text = normalizeSurface(value);
+    SEMANTIC_PHRASE_GROUPS.forEach((group, index) => {
+      const marker = " intentphrase" + index + " ";
+      group
+        .map(phrase => normalizeSurface(phrase))
+        .sort((a, b) => b.length - a.length)
+        .forEach(phrase => {
+          const phrasePattern = escapeRegExp(phrase).replace(/\\ /g, "\\s+");
+          const pattern = new RegExp("(^|\\s)" + phrasePattern + "(?=\\s|$)", "g");
+          text = text.replace(pattern, "$1" + marker);
+        });
+    });
+    return text
+      .split(" ")
+      .filter(Boolean)
+      .map(word => SEMANTIC_WORD_EQUIVALENTS[word] || word)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeSurface(value) {
+    let text = String(value)
+      .toLowerCase()
+      .trim()
+      .replace(/[’‘\u0060´]/g, "'");
+    CONTRACTION_RULES.forEach(([pattern, replacement]) => {
+      text = text.replace(pattern, replacement);
+    });
+    return text
+      .replace(/&/g, " and ")
+      .replace(/['"]/g, "")
+      .replace(/[.,!?;:“”。；，！？：()\[\]{}\-_\/\\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+  }
+
+  function levenshtein(a, b) {
+    const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        matrix[i][j] = b[i - 1] === a[j - 1]
+          ? matrix[i - 1][j - 1]
+          : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+      }
+    }
+    return matrix[b.length][a.length];
+  }
+
+  function playNextEnglishVoice() {
+    const gender = nextEnglishVoiceGender;
+    if (!speakCurrentEnglish(0.9, gender)) return;
+    lastEnglishVoiceGender = gender;
+    nextEnglishVoiceGender = gender === "male" ? "female" : "male";
+    renderVoiceCycleButton();
+  }
+
+  function renderVoiceCycleButton() {
+    const maleNext = nextEnglishVoiceGender === "male";
+    $("#voiceCycleIcon").textContent = maleNext ? "♂" : "♀";
+    $("#voiceCycleLabel").textContent = maleNext ? "男声" : "女声";
+    $("#speakPromptButton").title = maleNext ? "播放英文男声" : "播放英文女声";
+    $("#speakPromptButton").setAttribute("aria-label", $("#speakPromptButton").title);
+  }
+
+  function speakCurrentEnglish(rate = 0.9, voiceGender) {
+    if (!session) return false;
+    return speakQuestionEnglish(session.questions[session.index], rate, voiceGender);
+  }
+
+  function speakQuestionEnglish(question, rate = 0.9, voiceGender) {
+    const englishAnswer = question.answers.find(answer => /[A-Za-z]/.test(answer));
+    const text = englishAnswer || (/[A-Za-z]/.test(question.prompt) ? question.prompt : "");
+    if (!text) {
+      showToast("这道题暂时没有可播放的英文");
+      return false;
+    }
+    return speak(text, "en-US", rate, voiceGender);
+  }
+
+  function speak(text, preferredLang, rate = 0.9, voiceGender) {
+    if (!("speechSynthesis" in window)) {
+      showToast("当前浏览器不支持朗读");
+      return false;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = preferredLang || (/[\u4e00-\u9fff]/.test(text) ? "zh-CN" : "en-US");
+    utterance.rate = rate;
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = selectSpeechVoice(voices, utterance.lang, voiceGender);
+    window.speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  function selectSpeechVoice(voices, language, voiceGender) {
+    const languageCode = language.toLowerCase();
+    const languageVoices = voices.filter(voice => {
+      const voiceLanguage = (voice.lang || "").toLowerCase();
+      return voiceLanguage === languageCode || voiceLanguage.startsWith(languageCode.slice(0, 2));
+    });
+    if (voiceGender && languageCode.startsWith("en")) {
+      const nameHints = VOICE_NAME_HINTS[voiceGender] || [];
+      const namedVoice = languageVoices.find(voice => nameHints.some(hint => voice.name.toLowerCase().includes(hint)));
+      if (namedVoice) return namedVoice;
+      if (languageVoices.length > 1) return voiceGender === "female" ? languageVoices[1] : languageVoices[0];
+    }
+    return languageVoices.find(voice => (voice.lang || "").toLowerCase() === languageCode)
+      || languageVoices[0]
+      || null;
+  }
+
+  async function openWordCoach(word) {
+    const lookup = normalizeLookupWord(word);
+    if (!lookup) return;
+    activeWord = { display: word, lookup, data: null };
+    $("#wordCoachTitle").textContent = word;
+    $("#wordCoachPhonetics").innerHTML = `<span class="phonetic-loading">正在查找音标…</span>`;
+    $("#usPhonetic").textContent = "点击播放";
+    $("#ukPhonetic").textContent = "点击播放";
+    $("#wordCoachStatus").textContent = "音标由联网词典提供，朗读可由浏览器完成。";
+    openModal("wordCoach");
+
+    const builtIn = BUILT_IN_PHONETICS[lookup];
+    if (builtIn) {
+      const localData = {
+        word: lookup,
+        us: { ipa: builtIn.us, audio: "" },
+        uk: { ipa: builtIn.uk, audio: "" },
+        source: "local"
+      };
+      activeWord.data = localData;
+      renderWordCoachData(localData, "已显示本机音标，正在补充联网发音…");
+    }
+
+    try {
+      const result = await lookupPhonetics(lookup);
+      if (!activeWord || activeWord.lookup !== lookup) return;
+      activeWord.data = result;
+      renderWordCoachData(result, "音标已载入；没有真人录音时会使用浏览器发音。");
+    } catch (error) {
+      if (!activeWord || activeWord.lookup !== lookup) return;
+      if (activeWord.data) {
+        $("#wordCoachStatus").textContent = "当前未连接到在线词典，已使用本机音标和浏览器发音。";
+      } else {
+        const fallback = {
+          word: lookup,
+          us: { ipa: "音标暂不可用", audio: "" },
+          uk: { ipa: "音标暂不可用", audio: "" },
+          source: "speech"
+        };
+        activeWord.data = fallback;
+        renderWordCoachData(fallback, "当前未连接到在线词典，仍可点击播放发音。", true);
+      }
+    }
+  }
+
+  async function lookupPhonetics(word) {
+    const cached = phoneticCache[word];
+    if (cached && Date.now() - cached.cachedAt < 90 * 24 * 60 * 60 * 1000) return cached;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6500);
+    try {
+      const response = await fetch(`${DICTIONARY_ENDPOINT}${encodeURIComponent(word)}`, { signal: controller.signal });
+      if (!response.ok) throw new Error("Word not found");
+      const entries = await response.json();
+      const result = parseDictionaryEntries(entries, word);
+      result.cachedAt = Date.now();
+      phoneticCache[word] = result;
+      savePhoneticCache();
+      return result;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function parseDictionaryEntries(entries, word) {
+    const phonetics = entries.flatMap(entry => entry.phonetics || []).filter(item => item.text || item.audio);
+    const generic = entries.find(entry => entry.phonetic)?.phonetic || phonetics.find(item => item.text)?.text || "";
+    const usItem = phonetics.find(item => /(^|[-_/])us([-.]|$)/i.test(item.audio || "")) || phonetics.find(item => /oʊ|ɝ|ɚ/.test(item.text || ""));
+    const ukItem = phonetics.find(item => /(^|[-_/])uk([-.]|$)/i.test(item.audio || "")) || phonetics.find(item => /əʊ|ɒ|ɜː/.test(item.text || ""));
+    const firstAudio = phonetics.find(item => item.audio);
+    const normalizeAudio = value => value && value.startsWith("//") ? `https:${value}` : (value || "");
+    const cleanIpa = value => value || generic || "音标暂不可用";
+    return {
+      word,
+      us: { ipa: cleanIpa(usItem?.text), audio: normalizeAudio(usItem?.audio || firstAudio?.audio) },
+      uk: { ipa: cleanIpa(ukItem?.text), audio: normalizeAudio(ukItem?.audio || firstAudio?.audio) },
+      source: "dictionary"
+    };
+  }
+
+  function renderWordCoachData(result, status, unavailable) {
+    const unique = result.us.ipa === result.uk.ipa;
+    $("#wordCoachPhonetics").innerHTML = unique
+      ? `<strong class="phonetic-main ${unavailable ? "unavailable" : ""}">${escapeHtml(result.us.ipa)}</strong><span>通用音标</span>`
+      : `<div><span>US</span><strong>${escapeHtml(result.us.ipa)}</strong></div><div><span>UK</span><strong>${escapeHtml(result.uk.ipa)}</strong></div>`;
+    $("#usPhonetic").textContent = result.us.ipa;
+    $("#ukPhonetic").textContent = result.uk.ipa;
+    $("#wordCoachStatus").textContent = status;
+  }
+
+  function playPronunciation(accent) {
+    if (!activeWord) return;
+    const pronunciation = activeWord.data?.[accent];
+    const language = accent === "uk" ? "en-GB" : "en-US";
+    if (activeAudio) {
+      activeAudio.pause();
+      activeAudio = null;
+    }
+    if (pronunciation?.audio) {
+      window.speechSynthesis?.cancel();
+      activeAudio = new Audio(pronunciation.audio);
+      activeAudio.play().catch(() => speak(activeWord.display, language));
+      return;
+    }
+    speak(activeWord.display, language);
+  }
+
+  function normalizeLookupWord(word) {
+    const cleaned = String(word).toLowerCase().replace(/’/g, "'").replace(/^[^a-z]+|[^a-z']+$/g, "");
+    const contractions = {
+      "what's": "what", "who's": "who", "where's": "where", "when's": "when", "it's": "it",
+      "i'm": "i", "you're": "you", "we're": "we", "they're": "they", "can't": "can",
+      "don't": "do", "doesn't": "does", "won't": "will", "i'll": "i", "we'll": "we"
+    };
+    return contractions[cleaned] || cleaned;
+  }
+
+  function loadPhoneticCache() {
+    try {
+      return JSON.parse(localStorage.getItem(PHONETIC_CACHE_KEY)) || {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function savePhoneticCache() {
+    const newest = Object.entries(phoneticCache)
+      .sort((a, b) => (b[1].cachedAt || 0) - (a[1].cachedAt || 0))
+      .slice(0, 300);
+    phoneticCache = Object.fromEntries(newest);
+    localStorage.setItem(PHONETIC_CACHE_KEY, JSON.stringify(phoneticCache));
+  }
+
+  function playFeedbackSound(correct, preview) {
+    if (!data.settings.soundEffects && !preview) return;
+    const AudioEngine = window.AudioContext || window.webkitAudioContext;
+    if (!AudioEngine) return;
+    audioContext = audioContext || new AudioEngine();
+    if (audioContext.state === "suspended") audioContext.resume();
+    const start = audioContext.currentTime + 0.01;
+    const notes = correct
+      ? [{ hz: 523.25, at: 0, duration: 0.16 }, { hz: 659.25, at: 0.08, duration: 0.18 }, { hz: 783.99, at: 0.16, duration: 0.24 }]
+      : [{ hz: 246.94, at: 0, duration: 0.18 }, { hz: 196, at: 0.13, duration: 0.25 }];
+    notes.forEach(note => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = correct ? "sine" : "triangle";
+      oscillator.frequency.value = note.hz;
+      gain.gain.setValueAtTime(0.0001, start + note.at);
+      gain.gain.exponentialRampToValueAtTime(preview ? 0.035 : 0.055, start + note.at + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + note.at + note.duration);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(start + note.at);
+      oscillator.stop(start + note.at + note.duration + 0.02);
+    });
+  }
+
+  function animateFeedback(correct) {
+    const stage = $("#questionStage");
+    stage.classList.remove("is-correct", "is-wrong");
+    void stage.offsetWidth;
+    stage.classList.add(correct ? "is-correct" : "is-wrong");
+    if (!correct || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const burst = $("#feedbackBurst");
+    burst.replaceChildren();
+    const colors = ["#f2c75c", "#df7156", "#4ca58a", "#60a9bd", "#f4eee3"];
+    for (let index = 0; index < 14; index++) {
+      const piece = document.createElement("i");
+      piece.style.setProperty("--x", `${(index - 6.5) * 15}px`);
+      piece.style.setProperty("--y", `${-48 - (index % 4) * 20}px`);
+      piece.style.setProperty("--r", `${index * 37}deg`);
+      piece.style.setProperty("--c", colors[index % colors.length]);
+      piece.style.setProperty("--d", `${(index % 5) * 26}ms`);
+      burst.appendChild(piece);
+    }
+  }
+
+  function renderResultCelebration(score) {
+    const panel = $("#resultPanel");
+    const layer = $("#resultConfetti");
+    panel.classList.toggle("celebrate", score >= 80);
+    layer.replaceChildren();
+    if (score < 80 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const colors = ["#f2c75c", "#df7156", "#4ca58a", "#60a9bd"];
+    for (let index = 0; index < 22; index++) {
+      const piece = document.createElement("i");
+      piece.style.left = `${4 + (index * 43) % 92}%`;
+      piece.style.setProperty("--delay", `${(index % 7) * 80}ms`);
+      piece.style.setProperty("--drift", `${(index % 2 ? 1 : -1) * (15 + index % 5 * 8)}px`);
+      piece.style.background = colors[index % colors.length];
+      layer.appendChild(piece);
+    }
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `echo-english-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("题库备份已导出");
+  }
+
+  function importData(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        if (!Array.isArray(imported.sets)) throw new Error("Invalid backup");
+        if (!window.confirm("导入会替换当前题库和练习记录，确定继续吗？")) return;
+        data = migrateData(imported);
+        clearSession();
+        selectedSetId = "all";
+        saveData();
+        renderAll();
+        showToast("题库备份已恢复");
+      } catch (error) {
+        showToast("这不是有效的 Echo English 备份文件");
+      } finally {
+        elements.importFileInput.value = "";
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function openModal(id) {
+    const modal = document.getElementById(id);
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+  }
+
+  function setMobileMenu(open) {
+    $("#sidebar").classList.toggle("open", open);
+    $("#sidebarScrim").classList.toggle("open", open);
+  }
+
+  function closeModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+    if (id === "wordCoach") {
+      window.speechSynthesis?.cancel();
+      if (activeAudio) activeAudio.pause();
+      activeAudio = null;
+      activeWord = null;
+    }
+  }
+
+  function showToast(message) {
+    clearTimeout(toastTimer);
+    elements.toast.textContent = message;
+    elements.toast.classList.add("show");
+    toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 2400);
+  }
+
+  function emptyState(title, text, actionText, action) {
+    return `<div class="empty-state"><strong>${title}</strong><span>${text}</span>${actionText ? `<br><button class="button secondary" data-empty-action="${action}">${actionText}</button>` : ""}</div>`;
+  }
+
+  function bindEmptyActions() {
+    $$('[data-empty-action="new-set"]').forEach(button => button.addEventListener("click", () => openSetModal()));
+    $$('[data-empty-action="add-questions"]').forEach(button => button.addEventListener("click", () => openQuestionModal()));
+    $$('[data-empty-action="practice-all"]').forEach(button => button.addEventListener("click", () => startPractice("all")));
+  }
+
+  function shuffle(items) {
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  }
+
+  function uid(prefix) {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function todayKey() {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${month}-${day}`;
+  }
+
+  function renderInteractiveEnglish(value) {
+    return String(value).split(/([A-Za-z]+(?:[’'][A-Za-z]+)*(?:-[A-Za-z]+)*)/g).map(part => {
+      if (!/^[A-Za-z]+(?:[’'][A-Za-z]+)*(?:-[A-Za-z]+)*$/.test(part)) return escapeHtml(part);
+      const safe = escapeHtml(part);
+      return `<button type="button" class="word-token" data-word="${safe}" title="听读 ${safe}">${safe}</button>`;
+    }).join("");
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+  }
+})();
